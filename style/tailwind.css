@@ -1,0 +1,271 @@
+@import "tailwindcss";
+
+@source "./src/**/*.rs";
+
+/* ============================================================
+   Design tokens
+   ============================================================ */
+@theme {
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdbfe;
+  --color-brand-300: #93c5fd;
+  --color-brand-400: #60a5fa;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+  --color-brand-800: #1e40af;
+  --color-brand-900: #1e3a8a;
+  --color-brand-950: #0b1a3d;
+
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ============================================================
+   Keyframes
+   ============================================================ */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-down {
+  from { opacity: 0; transform: translateY(-12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes kenburns {
+  from { transform: scale(1) translate3d(0, 0, 0); }
+  to { transform: scale(1.09) translate3d(-1.5%, -1%, 0); }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.8); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes pop-in {
+  0% { opacity: 0; transform: scale(0.6); }
+  60% { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slide-in-left {
+  from { opacity: 0; transform: translateX(-16px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes drawer-in {
+  from { opacity: 0; transform: translateX(100%); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.85); opacity: 0.7; }
+  70% { transform: scale(1.6); opacity: 0; }
+  100% { transform: scale(1.6); opacity: 0; }
+}
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+
+@keyframes draw-check {
+  from { stroke-dashoffset: 48; }
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes ring-expand {
+  from { transform: scale(0.4); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes gradient-pan {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes spin-slow {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes bar-grow {
+  from { transform: scaleY(0); }
+  to { transform: scaleY(1); }
+}
+
+@keyframes width-grow {
+  from { width: 0; }
+}
+
+/* ============================================================
+   Animation utilities
+   ============================================================ */
+.animate-fade-up { animation: fade-up 0.6s var(--ease-out-soft) both; }
+.animate-fade-down { animation: fade-down 0.5s var(--ease-out-soft) both; }
+.animate-fade-in { animation: fade-in 0.5s ease-out both; }
+.animate-kenburns { animation: kenburns 20s ease-out infinite alternate; }
+.animate-scale-in { animation: scale-in 0.5s var(--ease-spring) both; }
+.animate-pop-in { animation: pop-in 0.55s var(--ease-spring) both; }
+.animate-slide-in-right { animation: slide-in-right 0.5s var(--ease-out-soft) both; }
+.animate-slide-in-left { animation: slide-in-left 0.5s var(--ease-out-soft) both; }
+.animate-drawer-in { animation: drawer-in 0.32s var(--ease-out-soft) both; }
+.animate-float { animation: float 5s ease-in-out infinite; }
+.animate-pulse-ring { animation: pulse-ring 2.2s cubic-bezier(0.24, 0, 0.38, 1) infinite; }
+.animate-marquee { animation: marquee 34s linear infinite; }
+.animate-toast-in { animation: toast-in 0.35s var(--ease-spring) both; }
+.animate-spin-slow { animation: spin-slow 9s linear infinite; }
+.animate-bar-grow { animation: bar-grow 0.8s var(--ease-out-soft) both; transform-origin: bottom; }
+.animate-width-grow { animation: width-grow 1s var(--ease-out-soft) both; }
+.animate-ring-expand { animation: ring-expand 0.6s var(--ease-spring) both; }
+
+.animate-gradient-pan {
+  background-size: 220% 220%;
+  animation: gradient-pan 8s ease infinite;
+}
+
+.animate-draw-check {
+  stroke-dasharray: 48;
+  stroke-dashoffset: 48;
+  animation: draw-check 0.7s var(--ease-out-soft) 0.25s forwards;
+}
+
+/* ============================================================
+   Scroll-driven reveal.
+
+   Chromium supports `animation-timeline: view()`, which gives us
+   scroll-linked entrances with zero JavaScript. Browsers without it
+   fall back to the element simply being visible (the @supports guard
+   means the opacity: 0 start state is never applied there).
+   ============================================================ */
+@supports (animation-timeline: view()) {
+  .reveal {
+    animation: fade-up 1ms linear both;
+    animation-timeline: view();
+    animation-range: entry 8% entry 85%;
+  }
+
+  .reveal-scale {
+    animation: scale-in 1ms linear both;
+    animation-timeline: view();
+    animation-range: entry 8% entry 85%;
+  }
+
+  .reveal-left {
+    animation: slide-in-left 1ms linear both;
+    animation-timeline: view();
+    animation-range: entry 8% entry 85%;
+  }
+
+  .reveal-right {
+    animation: slide-in-right 1ms linear both;
+    animation-timeline: view();
+    animation-range: entry 8% entry 85%;
+  }
+}
+
+/* ============================================================
+   Surfaces & effects
+   ============================================================ */
+.skeleton {
+  background: linear-gradient(90deg, #eef2f7 25%, #f8fafc 50%, #eef2f7 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+.glass {
+  background: rgba(255, 255, 255, 0.72);
+  /* Only the unprefixed property here: Lightning CSS adds `-webkit-` itself for
+     the browserslist targets. Writing both by hand made it keep the `-webkit-`
+     one and drop the standard property, which Chrome 152+ no longer accepts. */
+  backdrop-filter: blur(14px) saturate(160%);
+}
+
+.card-hover {
+  transition: transform 0.3s var(--ease-out-soft), box-shadow 0.3s var(--ease-out-soft), border-color 0.3s;
+}
+.card-hover:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 18px 40px -18px rgb(15 23 42 / 0.28);
+}
+
+/* Sheen that sweeps across a button on hover. */
+.sheen { position: relative; overflow: hidden; }
+.sheen::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(110deg, transparent 25%, rgba(255, 255, 255, 0.4) 50%, transparent 75%);
+  transform: translateX(-120%);
+  transition: transform 0.7s var(--ease-out-soft);
+}
+.sheen:hover::after { transform: translateX(120%); }
+
+/* Animated underline for nav links. */
+.link-underline { position: relative; }
+.link-underline::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -4px;
+  height: 2px;
+  width: 100%;
+  border-radius: 2px;
+  background: currentColor;
+  transform: scaleX(0);
+  transform-origin: right;
+  transition: transform 0.28s var(--ease-out-soft);
+}
+.link-underline:hover::after,
+.link-underline[data-active="true"]::after {
+  transform: scaleX(1);
+  transform-origin: left;
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+html { scroll-behavior: smooth; }
+
+::selection { background: #1d4ed8; color: #fff; }
+
+/* ============================================================
+   Accessibility
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
