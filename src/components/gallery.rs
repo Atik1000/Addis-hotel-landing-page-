@@ -4,10 +4,14 @@ use crate::components::Icon;
 use leptos::prelude::*;
 
 #[component]
-pub fn Gallery(photos: &'static [&'static str], alt: &'static str) -> impl IntoView {
+pub fn Gallery(photos: Vec<String>, #[prop(into)] alt: String) -> impl IntoView {
     let open = RwSignal::new(false);
     let index = RwSignal::new(0usize);
     let count = photos.len();
+    let hero = photos.first().cloned().unwrap_or_default();
+    let all = StoredValue::new(photos.clone());
+    let alt_hero = alt.clone();
+    let alt_caption = StoredValue::new(alt.clone());
 
     let show = move |i: usize| {
         index.set(i);
@@ -18,8 +22,14 @@ pub fn Gallery(photos: &'static [&'static str], alt: &'static str) -> impl IntoV
 
     // The mosaic shows a hero plus up to four thumbnails; the last thumbnail
     // carries the "+N photos" overlay when there are more than five.
-    let thumbs: Vec<(usize, &'static str)> =
-        photos.iter().skip(1).take(4).copied().enumerate().map(|(i, p)| (i + 1, p)).collect();
+    let thumbs: Vec<(usize, String)> = photos
+        .iter()
+        .skip(1)
+        .take(4)
+        .cloned()
+        .enumerate()
+        .map(|(i, p)| (i + 1, p))
+        .collect();
     let hidden = count.saturating_sub(5);
     let last_thumb = thumbs.len().saturating_sub(1);
 
@@ -31,8 +41,8 @@ pub fn Gallery(photos: &'static [&'static str], alt: &'static str) -> impl IntoV
                     class="group relative col-span-4 row-span-2 overflow-hidden sm:col-span-2"
                 >
                     <img
-                        src=photos[0]
-                        alt=alt
+                        src=hero
+                        alt=alt_hero
                         class="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105"
                     />
                     <span class="absolute inset-0 bg-gradient-to-t from-slate-900/40 via-transparent to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100"></span>
@@ -75,7 +85,7 @@ pub fn Gallery(photos: &'static [&'static str], alt: &'static str) -> impl IntoV
                     <div class="flex items-center justify-between px-4 py-3 text-white sm:px-6">
                         <span class="text-sm font-semibold">
                             {move || format!("{} / {}", index.get() + 1, count)}
-                            <span class="ml-2 hidden text-slate-400 sm:inline">{alt}</span>
+                            <span class="ml-2 hidden text-slate-400 sm:inline">{move || alt_caption.get_value()}</span>
                         </span>
                         <button
                             aria-label="Close gallery"
@@ -95,12 +105,17 @@ pub fn Gallery(photos: &'static [&'static str], alt: &'static str) -> impl IntoV
                             <Icon name="chevron-left" class="h-5 w-5" />
                         </button>
 
-                        {move || view! {
-                            <img
-                                src=photos[index.get()]
-                                alt=""
-                                class="max-h-full max-w-full animate-scale-in rounded-xl object-contain shadow-2xl"
-                            />
+                        {move || {
+                            let src = all.with_value(|p: &Vec<String>| {
+                                p.get(index.get()).cloned().unwrap_or_default()
+                            });
+                            view! {
+                                <img
+                                    src=src
+                                    alt=""
+                                    class="max-h-full max-w-full animate-scale-in rounded-xl object-contain shadow-2xl"
+                                />
+                            }
                         }}
 
                         <button
@@ -113,7 +128,7 @@ pub fn Gallery(photos: &'static [&'static str], alt: &'static str) -> impl IntoV
                     </div>
 
                     <div class="no-scrollbar flex gap-2 overflow-x-auto px-4 pb-5 sm:justify-center sm:px-6">
-                        {photos.iter().enumerate().map(|(i, p)| view! {
+                        {move || all.get_value().into_iter().enumerate().map(|(i, p)| view! {
                             <button
                                 on:click=move |_| index.set(i)
                                 class=move || format!(
@@ -121,7 +136,7 @@ pub fn Gallery(photos: &'static [&'static str], alt: &'static str) -> impl IntoV
                                     if index.get() == i { "ring-white opacity-100 scale-105" } else { "ring-transparent opacity-50 hover:opacity-90" }
                                 )
                             >
-                                <img src=*p alt="" class="h-full w-full object-cover" />
+                                <img src=p alt="" class="h-full w-full object-cover" />
                             </button>
                         }).collect_view()}
                     </div>

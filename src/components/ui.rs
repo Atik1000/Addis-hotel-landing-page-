@@ -6,21 +6,25 @@ use leptos::prelude::*;
 /// Row of five stars for a rating out of 5, with half-star support.
 #[component]
 pub fn Stars(
-    rating: f32,
+    #[prop(into)] rating: Signal<f32>,
     #[prop(default = "h-3.5 w-3.5")] class: &'static str,
 ) -> impl IntoView {
     view! {
         <span class="inline-flex items-center gap-0.5 text-amber-500">
             {(1..=5).map(|i| {
                 let i = i as f32;
-                let name = if rating >= i {
-                    "star"
-                } else if rating >= i - 0.5 {
-                    "star-half"
-                } else {
-                    "star-outline"
-                };
-                view! { <Icon name=name class=class /> }
+                view! {
+                    {move || {
+                        let r = rating.get();
+                        if r >= i {
+                            view! { <Icon name="star" class=class /> }.into_any()
+                        } else if r >= i - 0.5 {
+                            view! { <Icon name="star-half" class=class /> }.into_any()
+                        } else {
+                            view! { <Icon name="star-outline" class=class /> }.into_any()
+                        }
+                    }}
+                }
             }).collect_view()}
         </span>
     }
@@ -82,6 +86,82 @@ pub fn SectionHeading(
 }
 
 /// Single expandable question. Kept uncontrolled so several can be open at once.
+/// `(1, "guest")` -> `"1 guest"`, `(3, "guest")` -> `"3 guests"`.
+///
+/// Only handles nouns that pluralise with a bare `s`, which covers every count
+/// noun on the site (guest, night, room, review).
+pub fn pluralize(n: u32, noun: &str) -> String {
+    if n == 1 {
+        format!("{n} {noun}")
+    } else {
+        format!("{n} {noun}s")
+    }
+}
+
+/// Heart toggle overlaid on a hotel image.
+///
+/// Saving is browser-local and deliberately not persisted: the portal has no
+/// accounts, so there is nowhere to sync a wishlist to.
+#[component]
+pub fn FavoriteButton(#[prop(default = "h-4 w-4")] size: &'static str) -> impl IntoView {
+    let on = RwSignal::new(false);
+    view! {
+        <button
+            aria-label="Save hotel"
+            on:click=move |ev| {
+                ev.prevent_default();
+                ev.stop_propagation();
+                on.update(|v| *v = !*v);
+            }
+            class="absolute right-2.5 top-2.5 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-white/95 text-slate-400 shadow-md backdrop-blur transition-all duration-200 hover:scale-110 hover:text-red-500 active:scale-90"
+        >
+            {move || view! {
+                <Icon
+                    name=if on.get() { "heart-fill" } else { "heart" }
+                    class=if on.get() { "h-4 w-4 text-red-500 animate-pop-in" } else { size }
+                />
+            }}
+        </button>
+    }
+}
+
+/// Collapsible panel with an owned title and arbitrary children.
+///
+/// [`AccordionItem`] takes a fixed question/answer pair for the FAQ copy; this
+/// one is for sections built from API data.
+#[component]
+pub fn Disclosure(
+    #[prop(into)] title: String,
+    #[prop(default = false)] start_open: bool,
+    children: Children,
+) -> impl IntoView {
+    let open = RwSignal::new(start_open);
+    view! {
+        <div>
+            <button
+                on:click=move |_| open.update(|v| *v = !*v)
+                class="flex w-full items-center justify-between gap-4 px-5 py-4 text-left"
+            >
+                <span class="text-sm font-bold text-slate-800">{title}</span>
+                <span class=move || format!(
+                    "shrink-0 text-slate-400 transition-transform duration-300 {}",
+                    if open.get() { "rotate-180" } else { "" }
+                )>
+                    <Icon name="chevron-down" class="h-4 w-4" />
+                </span>
+            </button>
+            <div class=move || format!(
+                "grid transition-all duration-300 {}",
+                if open.get() { "grid-rows-[1fr] opacity-100" } else { "grid-rows-[0fr] opacity-0" }
+            )>
+                <div class="overflow-hidden">
+                    <div class="px-5 pb-4">{children()}</div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
 #[component]
 pub fn AccordionItem(
     question: &'static str,
@@ -228,6 +308,23 @@ pub fn Modal(
                     </button>
                 </div>
                 <div class="px-6 py-5">{children()}</div>
+            </div>
+        </div>
+    }
+}
+
+/// Placeholder row shown while a hotel list is in flight.
+#[component]
+pub fn SkeletonCard() -> impl IntoView {
+    view! {
+        <div class="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white sm:flex-row">
+            <div class="skeleton h-44 w-full shrink-0 sm:h-auto sm:w-56"></div>
+            <div class="flex flex-1 flex-col gap-3 p-4">
+                <div class="skeleton h-3 w-24 rounded"></div>
+                <div class="skeleton h-5 w-2/3 rounded"></div>
+                <div class="skeleton h-3 w-1/2 rounded"></div>
+                <div class="skeleton h-3 w-full rounded"></div>
+                <div class="skeleton h-3 w-4/5 rounded"></div>
             </div>
         </div>
     }

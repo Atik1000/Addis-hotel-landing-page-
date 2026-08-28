@@ -1,87 +1,129 @@
-use crate::components::{pluralize, tag_icon, thousands, AccordionItem, Breadcrumbs, Gallery, HotelCardCompact, Icon, RatingBadge, Stars};
-use crate::data::{find_hotel, similar_hotels, Hotel};
+//! One hotel, backed by `GET /organizations/public/{id}/`.
+//!
+//! Three server functions feed the page: the hotel record (identity, policies,
+//! contacts, gallery), its bookable rooms from `/rooms/public/`, and its guest
+//! reviews from `/reviews/`. All three are `Resource`s so the page is rendered
+//! on the server and arrives complete for search engines.
+//!
+//! The fixtures this page used to show — square metres, "only N left", nearby
+//! landmarks, refundable flags — have no counterpart in the API, so the page
+//! now shows what the property actually publishes instead.
+
+use crate::api::{
+    get_hotel_detail, list_hotel_reviews, list_hotel_rooms, money_round, HotelDetail, HotelReviews,
+    RoomSummary,
+};
+use crate::components::{pluralize, Breadcrumbs, Disclosure, Gallery, Icon, Stars};
 use leptos::prelude::*;
 use leptos_meta::Title;
 use leptos_router::components::A;
-use leptos_router::hooks::use_params_map;
-
-/// Groups amenities so the full list reads as categories rather than a wall of chips.
-fn amenity_group(a: &str) -> &'static str {
-    match a {
-        "Free Wi-Fi" | "Business Centre" | "Air Conditioning" => "In every room",
-        "Swimming Pool" | "Gym" | "Spa" => "Wellness & leisure",
-        "Restaurant" | "Bar" | "Room Service" => "Food & drink",
-        "Airport Pickup" | "Parking" => "Getting around",
-        _ => "Services",
-    }
-}
-
-const GROUP_ORDER: [&str; 5] = [
-    "In every room",
-    "Food & drink",
-    "Wellness & leisure",
-    "Getting around",
-    "Services",
-];
+use leptos_router::hooks::{use_params_map, use_query_map};
 
 #[component]
 pub fn HotelDetailsPage() -> impl IntoView {
     let params = use_params_map();
-    let hotel = move || {
-        let id = params.get().get("id").unwrap_or_default();
-        find_hotel(&id)
-    };
+    let query = use_query_map();
+
+    // Dates carried over from the search widget so the room list can be filtered
+    // to what is actually free.
+    let check_in = move || query.get().get("check_in").unwrap_or_default();
+    let check_out = move || query.get().get("check_out").unwrap_or_default();
+    let id = move || params.get().get("id").unwrap_or_default();
+
+    let hotel = Resource::new(id, |id| async move { get_hotel_detail(id).await });
+    let rooms = Resource::new(
+        move || (id(), check_in(), check_out()),
+        |(id, ci, co)| async move { list_hotel_rooms(id, Some(ci), Some(co)).await },
+    );
+    let reviews = Resource::new(id, |id| async move { list_hotel_reviews(id).await });
 
     view! {
-        {move || match hotel() {
-            None => view! {
-                <div class="mx-auto flex max-w-lg flex-col items-center gap-3 px-4 py-24 text-center">
-                    <span class="flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 text-slate-400">
-                        <Icon name="building" class="h-7 w-7" />
-                    </span>
-                    <h1 class="text-xl font-bold text-slate-900">"Hotel not found"</h1>
-                    <p class="text-sm text-slate-500">"That listing may have been removed or the link is incorrect."</p>
-                    <A href="/hotels" attr:class="mt-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-blue-800">
-                        "Browse all hotels"
-                    </A>
-                </div>
-            }.into_any(),
-            Some(h) => view! { <HotelDetail hotel=h /> }.into_any(),
-        }}
+        <Suspense fallback=|| view! { <HotelSkeleton/> }>
+            {move || Suspend::new(async move {
+                match hotel.await {
+                    Err(_) | Ok(_) if false => ().into_any(),
+                    Err(e) => view! { <NotFound message=e.to_string() /> }.into_any(),
+                    Ok(h) => view! { <HotelBody hotel=h rooms=rooms reviews=reviews /> }.into_any(),
+                }
+            })}
+        </Suspense>
     }
 }
 
 #[component]
-fn HotelDetail(hotel: &'static Hotel) -> impl IntoView {
-    let h = hotel;
+fn HotelBody(
+    hotel: HotelDetail,
+    rooms: Resource<Result<Vec<RoomSummary>, ServerFnError>>,
+    reviews: Resource<Result<HotelReviews, ServerFnError>>,
+) -> impl IntoView {
     let description_expanded = RwSignal::new(false);
     let show_all_amenities = RwSignal::new(false);
     let reviews_shown = RwSignal::new(3usize);
-    let breakdown = h.rating_breakdown();
-    let total_reviews: u32 = breakdown.iter().sum::<u32>().max(1);
-    let cheapest = h.cheapest_room();
+
+    let h = hotel.clone();
+    let currency = h.currency_code().to_string();
+    let stars = h.stars();
+    let star_class = stars.round() as u32;
+    let location = h.location();
+    let city_line = h.city_line();
+    let policies = h.policies.clone().unwrap_or_default();
+    let gallery = h.gallery();
+    let contacts = h.contacts.clone();
+    let amenities = h.amenities.clone();
+
     let map_url = format!(
         "https://www.google.com/maps/search/?api=1&query={}",
-        h.location_line().replace(' ', "+")
+        location.replace(' ', "+")
     );
 
     let trail = vec![
         ("Home".to_string(), Some("/".to_string())),
-        (h.country.to_string(), Some("/hotels".to_string())),
-        (h.city.to_string(), Some(format!("/hotels?city={}", h.city.replace(' ', "+")))),
-        (h.name.to_string(), None),
+        ("Hotels".to_string(), Some("/hotels".to_string())),
+        (
+            h.city.clone().unwrap_or_else(|| "Ethiopia".into()),
+            Some(format!(
+                "/hotels?city={}",
+                h.city.clone().unwrap_or_default().replace(' ', "+")
+            )),
+        ),
+        (h.name.clone(), None),
     ];
 
+    let hotel_id = h.id;
+    let name = h.name.clone();
+    let description = h.description.clone().unwrap_or_default();
+    let has_description = !description.trim().is_empty();
+    let description_len = description.len();
+    let checkin_display = policies.checkin_display();
+    let checkout_display = policies.checkout_display();
+    let house_rules = policies.rules();
+    let payment_methods = policies.payment_methods();
+    let public_note = policies.public_note.clone();
+    let description_text = StoredValue::new(description);
+    // The rooms block re-renders, so the currency cannot be moved into it.
+    let currency_code = StoredValue::new(currency.clone());
+
     view! {
-        <Title text=format!("{} — {}, {} | Horn of Africa Hotel Portal", h.name, h.area, h.city) />
+        <Title text=format!("{} — {} | Horn of Africa Hotel Portal", name, city_line) />
 
         <div class="mx-auto max-w-6xl px-4 py-5">
             <div class="mb-4 animate-fade-up">
                 <Breadcrumbs trail=trail />
             </div>
 
+            // ---- Gallery -------------------------------------------------
             <div class="animate-fade-up" style="animation-delay: 60ms">
-                <Gallery photos=h.photos alt=h.name />
+                {if gallery.is_empty() {
+                    // No photos uploaded — a monogram beats a stock photo of
+                    // somebody else's hotel.
+                    view! {
+                        <div class="flex h-56 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 sm:h-72">
+                            <span class="text-6xl font-extrabold text-white/90">{h.initial()}</span>
+                        </div>
+                    }.into_any()
+                } else {
+                    view! { <Gallery photos=gallery alt=name.clone() /> }.into_any()
+                }}
             </div>
 
             <div class="mt-7 grid gap-8 lg:grid-cols-[minmax(0,1fr)_21rem]">
@@ -89,16 +131,12 @@ fn HotelDetail(hotel: &'static Hotel) -> impl IntoView {
                 <div class="min-w-0">
                     <div class="animate-fade-up" style="animation-delay: 100ms">
                         <div class="flex flex-wrap items-center gap-2">
-                            <span class="flex items-center gap-0.5 text-amber-500">
-                                {(0..h.star_class).map(|_| view! { <Icon name="star" class="h-3.5 w-3.5" /> }).collect_view()}
-                            </span>
-                            <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                                {format!("{}-star hotel", h.star_class)}
-                            </span>
-                            <Show when=move || h.featured>
-                                <span class="flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-0.5 text-[11px] font-bold text-blue-700 ring-1 ring-blue-100">
-                                    <Icon name="award" class="h-3 w-3" />
-                                    "Featured"
+                            <Show when=move || (star_class > 0)>
+                                <span class="flex items-center gap-0.5 text-amber-500">
+                                    {(0..star_class).map(|_| view! { <Icon name="star" class="h-3.5 w-3.5" /> }).collect_view()}
+                                </span>
+                                <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                                    {format!("{star_class}-star hotel")}
                                 </span>
                             </Show>
                             <span class="flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-bold text-emerald-700 ring-1 ring-emerald-100">
@@ -107,458 +145,559 @@ fn HotelDetail(hotel: &'static Hotel) -> impl IntoView {
                             </span>
                         </div>
 
-                        <h1 class="mt-2 text-3xl font-extrabold tracking-tight text-slate-900">{h.name}</h1>
+                        <h1 class="mt-2 text-3xl font-extrabold tracking-tight text-slate-900">{name.clone()}</h1>
 
-                        <p class="mt-1.5 flex items-center gap-1.5 text-sm text-slate-500">
+                        <p class="mt-1.5 flex flex-wrap items-center gap-1.5 text-sm text-slate-500">
                             <Icon name="map-pin" class="h-4 w-4 shrink-0 text-blue-700" />
-                            {h.location_line()}
-                            <a href=map_url.clone() target="_blank" rel="noopener noreferrer" class="ml-1 font-semibold text-blue-700 hover:underline">
+                            {location.clone()}
+                            <a href=map_url target="_blank" rel="noopener noreferrer" class="ml-1 font-semibold text-blue-700 hover:underline">
                                 "Show on map"
                             </a>
                         </p>
 
-                        <div class="mt-3">
-                            <RatingBadge rating=h.rating review_count=h.review_count />
-                        </div>
-                    </div>
-
-                    // ---- Quick facts ------------------------------------------
-                    <div class="mt-6 grid animate-fade-up grid-cols-2 gap-3 sm:grid-cols-4" style="animation-delay: 140ms">
-                        {[
-                            ("clock", "Check-in", h.check_in_time),
-                            ("clock", "Check-out", h.check_out_time),
-                            ("bed", "Room types", "See below"),
-                            ("wallet", "Payment", "At the hotel"),
-                        ].into_iter().enumerate().map(|(i, (icon, label, value))| {
-                            let value = if label == "Room types" {
-                                Box::leak(format!("{} available", h.rooms.len()).into_boxed_str()) as &'static str
-                            } else { value };
-                            let delay = format!("animation-delay: {}ms", 140 + i * 40);
-                            view! {
-                                <div class="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white p-3" style=delay>
-                                    <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
-                                        <Icon name=icon class="h-4 w-4" />
-                                    </span>
-                                    <span class="min-w-0">
-                                        <span class="block text-[11px] uppercase tracking-wide text-slate-400">{label}</span>
-                                        <span class="block truncate text-sm font-bold text-slate-800">{value}</span>
-                                    </span>
-                                </div>
-                            }
-                        }).collect_view()}
-                    </div>
-
-                    // ---- About ------------------------------------------------
-                    <section class="mt-8">
-                        <h2 class="text-lg font-bold text-slate-900">"About this hotel"</h2>
-                        <p class=move || format!(
-                            "mt-2 text-sm leading-relaxed text-slate-600 transition-all {}",
-                            if description_expanded.get() { "" } else { "line-clamp-3" }
-                        )>
-                            {h.description}
-                        </p>
-                        <button
-                            on:click=move |_| description_expanded.update(|v| *v = !*v)
-                            class="mt-2 flex items-center gap-1 text-sm font-bold text-blue-700 hover:underline"
-                        >
-                            {move || if description_expanded.get() { "Read less" } else { "Read more" }}
-                            <span class=move || format!(
-                                "transition-transform duration-300 {}",
-                                if description_expanded.get() { "rotate-180" } else { "" }
-                            )>
-                                <Icon name="chevron-down" class="h-3.5 w-3.5" />
-                            </span>
-                        </button>
-                    </section>
-
-                    // ---- Amenities --------------------------------------------
-                    <section class="mt-8">
-                        <div class="flex items-center justify-between gap-3">
-                            <h2 class="text-lg font-bold text-slate-900">"Amenities"</h2>
-                            <button
-                                on:click=move |_| show_all_amenities.update(|v| *v = !*v)
-                                class="text-sm font-bold text-blue-700 hover:underline"
-                            >
-                                {move || if show_all_amenities.get() { "Show less".to_string() } else { format!("Show all {}", h.amenities.len()) }}
-                            </button>
-                        </div>
-
-                        <Show
-                            when=move || show_all_amenities.get()
-                            fallback=move || view! {
-                                <div class="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                                    {h.amenities.iter().take(6).map(|a| view! {
-                                        <span class="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 transition-colors hover:border-blue-200 hover:bg-blue-50/50">
-                                            <Icon name=tag_icon(a) class="h-4 w-4 shrink-0 text-blue-700" />
-                                            <span class="truncate">{*a}</span>
+                        // The rating is the guests' own, straight from the review feed.
+                        <Suspense fallback=|| ()>
+                            {move || Suspend::new(async move {
+                                let r = reviews.await.unwrap_or_default();
+                                if r.count == 0 {
+                                    return view! {
+                                        <p class="mt-3 text-xs text-slate-400">"No guest reviews yet"</p>
+                                    }.into_any();
+                                }
+                                view! {
+                                    <div class="mt-3 flex items-center gap-2">
+                                        <span class="rounded-lg bg-blue-700 px-2 py-1 text-sm font-bold text-white">
+                                            {format!("{:.1}", r.average)}
                                         </span>
-                                    }).collect_view()}
-                                </div>
-                            }
-                        >
-                            <div class="mt-3 flex animate-fade-up flex-col gap-5">
-                                {GROUP_ORDER.into_iter().map(|group| {
-                                    let items: Vec<&&str> = h.amenities.iter().filter(|a| amenity_group(a) == group).collect();
-                                    let empty = items.is_empty();
-                                    view! {
-                                        <Show when=move || !empty>
-                                            <div>
-                                                <h3 class="mb-2 text-xs font-bold uppercase tracking-wider text-slate-400">{group}</h3>
-                                                <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                                                    {h.amenities.iter().filter(|a| amenity_group(a) == group).map(|a| view! {
-                                                        <span class="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700">
-                                                            <Icon name=tag_icon(a) class="h-4 w-4 shrink-0 text-blue-700" />
-                                                            <span class="truncate">{*a}</span>
-                                                        </span>
-                                                    }).collect_view()}
-                                                </div>
-                                            </div>
-                                        </Show>
-                                    }
-                                }).collect_view()}
-                            </div>
-                        </Show>
-                    </section>
+                                        <Stars rating=r.average class="h-3.5 w-3.5" />
+                                        <span class="text-xs text-slate-500">{pluralize(r.count, "review")}</span>
+                                    </div>
+                                }.into_any()
+                            })}
+                        </Suspense>
+                    </div>
 
-                    // ---- Rooms -------------------------------------------------
+                    // ---- Quick facts ------------------------------------
+                    <div class="mt-6 grid animate-fade-up grid-cols-2 gap-3 sm:grid-cols-4" style="animation-delay: 140ms">
+                        <Fact icon="clock" label="Check-in" value=policies.checkin_display() />
+                        <Fact icon="clock" label="Check-out" value=policies.checkout_display() />
+                        <Fact
+                            icon="bed"
+                            label="Rooms"
+                            value=Signal::derive(move || match rooms.get() {
+                                Some(Ok(list)) => format!("{} available", list.len()),
+                                _ => "Loading…".to_string(),
+                            })
+                        />
+                        <Fact icon="wallet" label="Payment" value="At the hotel" />
+                    </div>
+
+                    // ---- About ------------------------------------------
+                    <Show when=move || has_description>
+                        <section class="mt-8">
+                            <h2 class="text-lg font-bold text-slate-900">"About this hotel"</h2>
+                            <p class=move || format!(
+                                "mt-2 text-sm leading-relaxed text-slate-600 transition-all {}",
+                                if description_expanded.get() { "" } else { "line-clamp-4" }
+                            )>
+                                {move || description_text.get_value()}
+                            </p>
+                            <Show when=move || (description_len > 260)>
+                                <button
+                                    class="mt-1.5 text-sm font-semibold text-blue-700 hover:underline"
+                                    on:click=move |_| description_expanded.update(|v| *v = !*v)
+                                >
+                                    {move || if description_expanded.get() { "Show less" } else { "Read more" }}
+                                </button>
+                            </Show>
+                        </section>
+                    </Show>
+
+                    // ---- Amenities ---------------------------------------
+                    <Show when={
+                        let n = amenities.len();
+                        move || n > 0
+                    }>
+                        <section class="mt-8">
+                            <h2 class="text-lg font-bold text-slate-900">"Amenities"</h2>
+                            <p class="mt-1 text-sm text-slate-500">"What this property offers its guests."</p>
+                            <div class="mt-3 flex flex-wrap gap-2">
+                                {
+                                    let list = amenities.clone();
+                                    move || {
+                                        let limit = if show_all_amenities.get() { list.len() } else { 12.min(list.len()) };
+                                        list.iter().take(limit).map(|a| view! {
+                                            <span class="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-700">
+                                                <Icon name="check" class="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                                                {a.name.clone()}
+                                            </span>
+                                        }).collect_view()
+                                    }
+                                }
+                            </div>
+                            <Show when={
+                                let n = amenities.len();
+                                move || n > 12
+                            }>
+                                <button
+                                    class="mt-2 text-sm font-semibold text-blue-700 hover:underline"
+                                    on:click=move |_| show_all_amenities.update(|v| *v = !*v)
+                                >
+                                    {move || if show_all_amenities.get() { "Show fewer".to_string() } else { "Show all amenities".to_string() }}
+                                </button>
+                            </Show>
+                        </section>
+                    </Show>
+
+                    // ---- Rooms -------------------------------------------
                     <section class="mt-9" id="rooms">
                         <h2 class="text-lg font-bold text-slate-900">"Choose your room"</h2>
-                        <p class="mt-1 text-sm text-slate-500">"All rates are per room per night and paid at the hotel."</p>
+                        <p class="mt-1 text-sm text-slate-500">
+                            "All rates are per room per night and paid at the hotel."
+                        </p>
 
-                        <div class="mt-4 flex flex-col gap-4">
-                            {h.rooms.iter().enumerate().map(|(i, r)| {
-                                let delay = format!("animation-delay: {}ms", i * 70);
-                                view! {
-                                    <article class="reveal card-hover flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white sm:flex-row" style=delay>
-                                        <div class="skeleton relative h-44 w-full shrink-0 overflow-hidden sm:h-auto sm:w-56">
-                                            <img src=r.image alt=r.name loading="lazy" class="h-full w-full object-cover transition-transform duration-700 hover:scale-105" />
-                                            <Show when=move || (r.rooms_left <= 3)>
-                                                <span class="absolute bottom-2 left-2 flex items-center gap-1 rounded-full bg-red-600 px-2.5 py-1 text-[11px] font-bold text-white shadow-md">
-                                                    <Icon name="alert" class="h-3 w-3" />
-                                                    {format!("Only {} left", r.rooms_left)}
-                                                </span>
-                                            </Show>
-                                        </div>
-
-                                        <div class="flex flex-1 flex-col gap-4 p-4 sm:flex-row">
-                                            <div class="min-w-0 flex-1">
-                                                <h3 class="text-base font-bold text-slate-900">{r.name}</h3>
-                                                <p class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                                                    <span class="flex items-center gap-1"><Icon name="bed" class="h-3.5 w-3.5" />{r.beds}</span>
-                                                    <span class="flex items-center gap-1"><Icon name="users" class="h-3.5 w-3.5" />{pluralize(r.guests, "guest")}</span>
-                                                    <span class="flex items-center gap-1"><Icon name="scan" class="h-3.5 w-3.5" />{format!("{} m²", r.size_sqm)}</span>
-                                                </p>
-
-                                                <ul class="mt-3 flex flex-col gap-1.5">
-                                                    {r.perks.iter().map(|p| view! {
-                                                        <li class="flex items-center gap-1.5 text-xs text-slate-600">
-                                                            <Icon name="check" class="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                                                            {*p}
-                                                        </li>
-                                                    }).collect_view()}
-                                                    <li class=format!(
-                                                        "flex items-center gap-1.5 text-xs font-semibold {}",
-                                                        if r.refundable { "text-emerald-700" } else { "text-slate-400" }
-                                                    )>
-                                                        <Icon
-                                                            name=if r.refundable { "check-circle" } else { "info" }
-                                                            class="h-3.5 w-3.5 shrink-0"
-                                                        />
-                                                        {if r.refundable { "Free cancellation up to 24h before" } else { "Non-refundable rate" }}
-                                                    </li>
-                                                </ul>
-                                            </div>
-
-                                            <div class="flex shrink-0 items-end justify-between gap-3 border-t border-slate-100 pt-3 sm:w-40 sm:flex-col sm:items-end sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
-                                                <div class="sm:text-right">
-                                                    <p class="text-xl font-extrabold text-slate-900">{format!("ETB {}", thousands(r.price_per_night))}</p>
-                                                    <p class="text-xs text-slate-400">"per night"</p>
-                                                </div>
-                                                <A
-                                                    href=format!("/hotels/{}/reserve/{}", h.id, r.id)
-                                                    attr:class="sheen flex items-center justify-center gap-1.5 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-blue-700/20 transition-all duration-200 hover:bg-blue-800 hover:shadow-lg active:scale-[0.98] sm:w-full"
-                                                >
-                                                    "Reserve"
-                                                    <Icon name="arrow-right" class="h-3.5 w-3.5" />
-                                                </A>
-                                            </div>
-                                        </div>
-                                    </article>
+                        <Suspense fallback=|| view! {
+                            <div class="mt-4 flex flex-col gap-4">
+                                <div class="skeleton h-40 rounded-2xl"></div>
+                                <div class="skeleton h-40 rounded-2xl"></div>
+                            </div>
+                        }>
+                            {move || Suspend::new(async move {
+                                let list = match rooms.await {
+                                    Ok(l) => l,
+                                    Err(e) => return view! {
+                                        <p class="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{e.to_string()}</p>
+                                    }.into_any(),
+                                };
+                                if list.is_empty() {
+                                    return view! {
+                                        <p class="mt-4 rounded-xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                                            "No rooms are available for these dates. Try a different date range."
+                                        </p>
+                                    }.into_any();
                                 }
-                            }).collect_view()}
-                        </div>
+                                let cur = currency_code.get_value();
+                                view! {
+                                    <div class="mt-4 flex flex-col gap-4">
+                                        {list.into_iter().enumerate().map(|(i, r)| {
+                                            view! { <RoomRow room=r hotel_id=hotel_id currency=cur.clone() index=i /> }
+                                        }).collect_view()}
+                                    </div>
+                                }.into_any()
+                            })}
+                        </Suspense>
                     </section>
 
-                    // ---- Reviews -----------------------------------------------
+                    // ---- Reviews -----------------------------------------
                     <section class="mt-10">
                         <h2 class="text-lg font-bold text-slate-900">"Guest reviews"</h2>
-
-                        <div class="mt-4 grid gap-6 rounded-2xl border border-slate-200 bg-white p-5 sm:grid-cols-[auto_minmax(0,1fr)]">
-                            <div class="flex flex-col items-center justify-center gap-1 border-slate-100 sm:border-r sm:pr-6">
-                                <span class="text-4xl font-extrabold tracking-tight text-slate-900">{format!("{:.1}", h.rating)}</span>
-                                <Stars rating=h.rating class="h-4 w-4" />
-                                <span class="text-xs text-slate-400">{pluralize(h.review_count, "review")}</span>
-                            </div>
-
-                            <div class="flex flex-col gap-2">
-                                {(0..5).rev().map(|i| {
-                                    let stars = i + 1;
-                                    let count = breakdown[i as usize];
-                                    let pct = count * 100 / total_reviews;
-                                    let width = format!("width: {pct}%");
-                                    view! {
-                                        <div class="flex items-center gap-3 text-xs">
-                                            <span class="flex w-10 shrink-0 items-center gap-0.5 font-semibold text-slate-600">
-                                                {stars}
-                                                <Icon name="star" class="h-3 w-3 text-amber-500" />
-                                            </span>
-                                            <span class="h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
-                                                <span class="animate-width-grow block h-full rounded-full bg-amber-400" style=width></span>
-                                            </span>
-                                            <span class="w-10 shrink-0 text-right tabular-nums text-slate-400">{count}</span>
-                                        </div>
-                                    }
-                                }).collect_view()}
-                            </div>
-                        </div>
-
-                        <div class="mt-4 flex flex-col gap-3">
-                            {move || h.reviews.iter().take(reviews_shown.get()).enumerate().map(|(i, r)| {
-                                let delay = format!("animation-delay: {}ms", (i % 3) * 70);
-                                view! {
-                                    <article class="animate-fade-up rounded-2xl border border-slate-200 bg-white p-5" style=delay>
-                                        <div class="flex items-start justify-between gap-3">
-                                            <div class="flex items-center gap-3">
-                                                <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-700">
-                                                    {r.initials}
-                                                </span>
-                                                <span>
-                                                    <span class="block text-sm font-bold text-slate-900">{r.author}</span>
-                                                    <span class="block text-xs text-slate-400">{format!("{} · {}", r.country, r.date)}</span>
-                                                </span>
-                                            </div>
-                                            <Stars rating={r.rating as f32} class="h-3.5 w-3.5" />
-                                        </div>
-                                        <h3 class="mt-3 text-sm font-bold text-slate-800">{r.title}</h3>
-                                        <p class="mt-1 text-sm leading-relaxed text-slate-600">{r.body}</p>
-                                        <p class="mt-2.5 flex items-center gap-1.5 text-xs text-slate-400">
-                                            <Icon name="bed" class="h-3.5 w-3.5" />
-                                            {r.stayed_in}
+                        <Suspense fallback=|| view! {
+                            <div class="skeleton mt-4 h-32 rounded-2xl"></div>
+                        }>
+                            {move || Suspend::new(async move {
+                                let r = reviews.await.unwrap_or_default();
+                                if r.count == 0 {
+                                    return view! {
+                                        <p class="mt-4 rounded-2xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                                            "No reviews yet. Only guests who have completed a stay can leave one."
                                         </p>
-                                    </article>
+                                    }.into_any();
                                 }
-                            }).collect_view()}
-                        </div>
-
-                        <Show when=move || (reviews_shown.get() < h.reviews.len())>
-                            <button
-                                on:click=move |_| reviews_shown.update(|n| *n = h.reviews.len())
-                                class="mt-4 flex w-full items-center justify-center gap-1.5 rounded-xl border border-slate-300 py-3 text-sm font-bold text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-300 hover:text-blue-700 hover:shadow-md"
-                            >
-                                {move || format!("Show all {}", pluralize(h.reviews.len() as u32, "review"))}
-                                <Icon name="chevron-down" class="h-4 w-4" />
-                            </button>
-                        </Show>
-                    </section>
-
-                    // ---- Location ----------------------------------------------
-                    <section class="mt-10">
-                        <h2 class="text-lg font-bold text-slate-900">"What's nearby"</h2>
-                        <div class="mt-3 grid gap-3 sm:grid-cols-2">
-                            {h.landmarks.iter().enumerate().map(|(i, l)| {
-                                let delay = format!("animation-delay: {}ms", i * 50);
+                                let total = r.count.max(1);
+                                let items = r.items.clone();
                                 view! {
-                                    <div class="reveal flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3" style=delay>
-                                        <span class="flex min-w-0 items-center gap-2.5">
-                                            <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
-                                                <Icon name=l.icon class="h-4 w-4" />
+                                    <div class="mt-4 grid gap-6 rounded-2xl border border-slate-200 bg-white p-5 sm:grid-cols-[auto_minmax(0,1fr)]">
+                                        <div class="flex flex-col items-center justify-center gap-1 border-slate-100 sm:border-r sm:pr-6">
+                                            <span class="text-4xl font-extrabold tracking-tight text-slate-900">
+                                                {format!("{:.1}", r.average)}
                                             </span>
-                                            <span class="truncate text-sm text-slate-700">{l.name}</span>
-                                        </span>
-                                        <span class="shrink-0 text-sm font-bold text-slate-500">{l.distance}</span>
+                                            <Stars rating=r.average class="h-4 w-4" />
+                                            <span class="text-xs text-slate-400">{pluralize(r.count, "review")}</span>
+                                        </div>
+                                        <ul class="flex flex-col justify-center gap-1.5">
+                                            {r.breakdown.into_iter().enumerate().map(|(i, n)| {
+                                                let stars = 5 - i as u32;
+                                                let pct = n * 100 / total;
+                                                view! {
+                                                    <li class="flex items-center gap-2 text-xs">
+                                                        <span class="w-8 shrink-0 text-slate-500">{format!("{stars}★")}</span>
+                                                        <span class="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+                                                            <span class="block h-full rounded-full bg-amber-400" style=format!("width: {pct}%")></span>
+                                                        </span>
+                                                        <span class="w-6 shrink-0 text-right tabular-nums text-slate-400">{n}</span>
+                                                    </li>
+                                                }
+                                            }).collect_view()}
+                                        </ul>
                                     </div>
-                                }
-                            }).collect_view()}
-                        </div>
 
-                        <a
-                            href=map_url.clone()
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            class="group mt-3 flex items-center justify-between gap-3 rounded-2xl border border-blue-200 bg-gradient-to-r from-blue-50 to-indigo-50 px-5 py-4 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md"
-                        >
-                            <span class="flex items-center gap-3">
-                                <span class="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-700 text-white">
-                                    <Icon name="map" class="h-5 w-5" />
-                                </span>
-                                <span>
-                                    <span class="block text-sm font-bold text-slate-800">"Open in Google Maps"</span>
-                                    <span class="block text-xs text-slate-500">{h.location_line()}</span>
-                                </span>
-                            </span>
-                            <Icon name="external-link" class="h-4 w-4 text-blue-700 transition-transform duration-200 group-hover:translate-x-0.5" />
-                        </a>
+                                    <div class="mt-4 flex flex-col gap-3">
+                                        {
+                                            let shown = items.clone();
+                                            move || shown.iter().take(reviews_shown.get()).map(|rev| view! {
+                                                <article class="rounded-2xl border border-slate-200 bg-white p-4">
+                                                    <div class="flex items-start gap-3">
+                                                        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-600 to-indigo-700 text-xs font-bold text-white">
+                                                            {rev.initials()}
+                                                        </span>
+                                                        <div class="min-w-0 flex-1">
+                                                            <div class="flex flex-wrap items-center gap-2">
+                                                                <span class="font-semibold text-slate-900">{rev.guest_name.clone()}</span>
+                                                                <Stars rating=rev.rate as f32 class="h-3 w-3" />
+                                                                <span class="text-xs text-slate-400">
+                                                                    {crate::api::pretty_date(rev.created_at.as_deref())}
+                                                                </span>
+                                                            </div>
+                                                            {rev.stayed_in().map(|s| view! {
+                                                                <p class="mt-0.5 text-xs text-slate-400">{s}</p>
+                                                            })}
+                                                            <p class="mt-2 text-sm leading-relaxed text-slate-600">{rev.comment.clone()}</p>
+                                                            {rev.has_reply().then(|| view! {
+                                                                <div class="mt-3 rounded-xl bg-slate-50 p-3">
+                                                                    <p class="text-xs font-bold text-slate-700">
+                                                                        {format!(
+                                                                            "Response from {}",
+                                                                            rev.replied_by_name.clone().unwrap_or_else(|| "the hotel".into()),
+                                                                        )}
+                                                                    </p>
+                                                                    <p class="mt-1 text-sm text-slate-600">
+                                                                        {rev.reply.clone().unwrap_or_default()}
+                                                                    </p>
+                                                                </div>
+                                                            })}
+                                                        </div>
+                                                    </div>
+                                                </article>
+                                            }).collect_view()
+                                        }
+                                    </div>
+
+                                    {
+                                        let n = items.len();
+                                        view! {
+                                            <Show when=move || (reviews_shown.get() < n)>
+                                                <button
+                                                    class="mt-3 w-full rounded-xl border border-slate-300 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                                                    on:click=move |_| reviews_shown.update(|v| *v += 5)
+                                                >
+                                                    "Show more reviews"
+                                                </button>
+                                            </Show>
+                                        }
+                                    }
+                                }.into_any()
+                            })}
+                        </Suspense>
                     </section>
 
-                    // ---- Policies -----------------------------------------------
+                    // ---- Policies ----------------------------------------
                     <section class="mt-10">
                         <h2 class="text-lg font-bold text-slate-900">"Hotel policies"</h2>
-                        <div class="mt-3 flex flex-col gap-3">
-                            <AccordionItem
-                                start_open=true
-                                question="Check-in & check-out"
-                                answer=Box::leak(format!(
-                                    "Check-in from {}. Check-out by {}. The front desk is staffed 24 hours, so late arrivals are fine — call the hotel on the number in your confirmation if you expect to arrive after midnight.",
-                                    h.check_in_time, h.check_out_time
-                                ).into_boxed_str())
-                            />
-                            <AccordionItem
-                                question="Payment"
-                                answer="Payment is made directly to the hotel at check-in. No card details are collected online and no deposit is taken by the portal. The hotel accepts cash and major cards; mobile money availability varies by property."
-                            />
-                            <AccordionItem
-                                question="Cancellation"
-                                answer="Rooms marked 'Free cancellation' can be cancelled up to 24 hours before check-in at no cost. Non-refundable rates are charged in full if cancelled or if you do not arrive. You can cancel from My Reservation or by calling the hotel."
-                            />
-                            <AccordionItem
-                                question="Children & extra beds"
-                                answer="Children under 6 stay free when sharing an existing bed. Extra beds and cots are subject to availability and may carry a small charge — request them in the notes field when you reserve."
-                            />
-                            <AccordionItem
-                                question="Identification"
-                                answer="All guests must present a valid passport or national ID at check-in. For guests booking on someone else's behalf, the named guest must be present with their own identification."
-                            />
-                        </div>
-                    </section>
+                        <div class="mt-3 divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                            <Disclosure title="Check-in and check-out" start_open=true>
+                                <ul class="flex flex-col gap-2 text-sm text-slate-600">
+                                    <li class="flex items-center gap-2">
+                                        <Icon name="clock" class="h-4 w-4 shrink-0 text-blue-700" />
+                                        {format!("Check-in from {checkin_display}")}
+                                    </li>
+                                    <li class="flex items-center gap-2">
+                                        <Icon name="clock" class="h-4 w-4 shrink-0 text-blue-700" />
+                                        {format!("Check-out by {checkout_display}")}
+                                    </li>
+                                </ul>
+                            </Disclosure>
 
-                    // ---- Similar -------------------------------------------------
-                    <section class="mt-10">
-                        <h2 class="text-lg font-bold text-slate-900">{format!("More hotels in {}", h.city)}</h2>
-                        <div class="mt-4 grid gap-4 sm:grid-cols-3">
-                            {similar_hotels(h).into_iter().enumerate().map(|(i, s)| {
-                                let delay = format!("animation-delay: {}ms", i * 70);
-                                view! { <div class="reveal" style=delay><HotelCardCompact hotel=s /></div> }
-                            }).collect_view()}
+                            {
+                                let rules = house_rules;
+                                (!rules.is_empty()).then(|| view! {
+                                    <Disclosure title="House rules">
+                                        <ul class="flex flex-col gap-2 text-sm text-slate-600">
+                                            {rules.into_iter().map(|(icon, text)| view! {
+                                                <li class="flex items-center gap-2">
+                                                    <Icon name=icon class="h-4 w-4 shrink-0 text-blue-700" />
+                                                    {text}
+                                                </li>
+                                            }).collect_view()}
+                                        </ul>
+                                    </Disclosure>
+                                })
+                            }
+
+                            <Disclosure title="Payment">
+                                <p class="text-sm text-slate-600">
+                                    "You pay the hotel directly on arrival — this portal never takes your card details and charges no booking fee."
+                                </p>
+                                <div class="mt-2 flex flex-wrap gap-2">
+                                    {payment_methods.into_iter().map(|m| view! {
+                                        <span class="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-700">{m}</span>
+                                    }).collect_view()}
+                                </div>
+                            </Disclosure>
+
+                            {public_note.filter(|n| !n.trim().is_empty()).map(|note| view! {
+                                <Disclosure title="Good to know">
+                                    <p class="whitespace-pre-line text-sm text-slate-600">{note}</p>
+                                </Disclosure>
+                            })}
                         </div>
                     </section>
                 </div>
 
-                // ================= STICKY BOOKING RAIL =================
-                <aside class="lg:sticky lg:top-24 lg:h-fit">
-                    <div class="animate-slide-in-right overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg shadow-slate-900/5" style="animation-delay: 160ms">
-                        <div class="border-b border-slate-100 bg-gradient-to-br from-blue-50 to-indigo-50 px-5 py-4">
-                            <Show when=move || h.price_was.is_some()>
-                                <span class="mb-1 inline-flex items-center gap-1 rounded-full bg-red-600 px-2 py-0.5 text-[11px] font-bold text-white">
-                                    <Icon name="percent" class="h-2.5 w-2.5" />
-                                    {format!("Was ETB {}", thousands(h.price_was.unwrap_or(0)))}
-                                </span>
-                            </Show>
-                            <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">"Rooms from"</p>
-                            <p class="text-3xl font-extrabold tracking-tight text-slate-900">
-                                {format!("ETB {}", thousands(h.price_from))}
-                                <span class="text-sm font-medium text-slate-500">" / night"</span>
-                            </p>
-                        </div>
+                // ================= SIDEBAR =================
+                <aside class="lg:sticky lg:top-24 lg:self-start">
+                    <div class="animate-fade-up rounded-2xl border border-slate-200 bg-white p-5 shadow-sm" style="animation-delay: 180ms">
+                        <Suspense fallback=|| view! { <div class="skeleton h-16 rounded-xl"></div> }>
+                            {move || Suspend::new(async move {
+                                let cheapest = rooms
+                                    .await
+                                    .ok()
+                                    .and_then(|list| {
+                                        list.into_iter()
+                                            .filter(|r| r.price() > 0.0)
+                                            .min_by(|a, b| a.price().total_cmp(&b.price()))
+                                    });
+                                match cheapest {
+                                    Some(r) => view! {
+                                        <div>
+                                            <p class="text-xs uppercase tracking-wide text-slate-400">"From"</p>
+                                            <p class="text-3xl font-extrabold tracking-tight text-slate-900">
+                                                {format!("ETB {}", money_round(r.price()))}
+                                            </p>
+                                            <p class="text-xs text-slate-400">"per night, taxes calculated at booking"</p>
+                                        </div>
+                                    }.into_any(),
+                                    None => view! {
+                                        <p class="text-sm text-slate-500">"No rooms loaded for these dates."</p>
+                                    }.into_any(),
+                                }
+                            })}
+                        </Suspense>
 
-                        <div class="p-5">
-                            <ul class="flex flex-col gap-2.5 text-sm">
-                                {[
-                                    ("shield-check", "No booking fees"),
-                                    ("wallet", "Pay at the hotel"),
-                                    ("check-circle", "Instant confirmation"),
-                                    ("users", "No account required"),
-                                ].into_iter().map(|(icon, label)| view! {
-                                    <li class="flex items-center gap-2 text-slate-700">
-                                        <Icon name=icon class="h-4 w-4 shrink-0 text-emerald-600" />
-                                        {label}
+                        <a
+                            href="#rooms"
+                            class="sheen mt-4 flex w-full items-center justify-center gap-1.5 rounded-xl bg-blue-700 px-4 py-3 text-sm font-bold text-white shadow-md shadow-blue-700/20 transition-all duration-200 hover:bg-blue-800 hover:shadow-lg active:scale-[0.98]"
+                        >
+                            "Choose a room"
+                            <Icon name="arrow-right" class="h-4 w-4" />
+                        </a>
+
+                        <ul class="mt-4 flex flex-col gap-2 border-t border-slate-100 pt-4 text-xs text-slate-600">
+                            <li class="flex items-center gap-2">
+                                <Icon name="check-circle" class="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                                "No booking fee, ever"
+                            </li>
+                            <li class="flex items-center gap-2">
+                                <Icon name="check-circle" class="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                                "No account needed"
+                            </li>
+                            <li class="flex items-center gap-2">
+                                <Icon name="check-circle" class="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                                "Pay the hotel on arrival"
+                            </li>
+                        </ul>
+                    </div>
+
+                    // ---- Contact ------------------------------------------
+                    <Show when={
+                        let has = h.phone_number.is_some() || h.email.is_some() || !contacts.is_empty();
+                        move || has
+                    }>
+                        <div class="mt-4 rounded-2xl border border-slate-200 bg-white p-5">
+                            <h3 class="text-sm font-bold text-slate-900">"Contact the property"</h3>
+                            <ul class="mt-2 flex flex-col gap-2 text-sm text-slate-600">
+                                {h.phone_number.clone().filter(|p| !p.is_empty()).map(|p| {
+                                    let href = format!("tel:{p}");
+                                    view! {
+                                        <li class="flex items-center gap-2">
+                                            <Icon name="phone" class="h-3.5 w-3.5 shrink-0 text-blue-700" />
+                                            <a href=href class="hover:underline">{p}</a>
+                                        </li>
+                                    }
+                                })}
+                                {h.whatsapp.clone().filter(|p| !p.is_empty()).map(|p| view! {
+                                    <li class="flex items-center gap-2">
+                                        <Icon name="message" class="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                                        <a href=format!("https://wa.me/{}", p.replace([' ', '+', '-'], "")) target="_blank" rel="noopener noreferrer" class="hover:underline">
+                                            "WhatsApp"
+                                        </a>
                                     </li>
-                                }).collect_view()}
+                                })}
+                                {h.email.clone().filter(|e| !e.is_empty()).map(|e| {
+                                    let href = format!("mailto:{e}");
+                                    view! {
+                                        <li class="flex items-center gap-2">
+                                            <Icon name="mail" class="h-3.5 w-3.5 shrink-0 text-blue-700" />
+                                            <a href=href class="truncate hover:underline">{e}</a>
+                                        </li>
+                                    }
+                                })}
+                                {h.website_url.clone().filter(|w| w.starts_with("http")).map(|w| view! {
+                                    <li class="flex items-center gap-2">
+                                        <Icon name="globe" class="h-3.5 w-3.5 shrink-0 text-blue-700" />
+                                        <a href=w.clone() target="_blank" rel="noopener noreferrer" class="truncate hover:underline">"Website"</a>
+                                    </li>
+                                })}
                             </ul>
-
-                            {match cheapest {
-                                Some(r) => view! {
-                                    <A
-                                        href=format!("/hotels/{}/reserve/{}", h.id, r.id)
-                                        attr:class="sheen mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 py-3.5 text-sm font-bold text-white shadow-lg shadow-blue-700/25 transition-all duration-200 hover:-translate-y-0.5 hover:bg-blue-800 hover:shadow-xl active:scale-[0.98]"
-                                    >
-                                        <Icon name="calendar-check" class="h-4 w-4" />
-                                        "Reserve a room"
-                                    </A>
-                                }.into_any(),
-                                None => view! {
-                                    <p class="mt-5 rounded-xl bg-slate-50 p-3 text-center text-sm text-slate-500">
-                                        "No rooms are loaded for this property yet."
-                                    </p>
-                                }.into_any(),
-                            }}
-
-                            <a
-                                href="#rooms"
-                                class="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 py-3 text-sm font-bold text-slate-700 transition-colors hover:border-blue-300 hover:text-blue-700"
-                            >
-                                "Compare all room types"
-                            </a>
-
-                            <div class="mt-5 border-t border-slate-100 pt-5">
-                                <h3 class="mb-2.5 text-xs font-bold uppercase tracking-wider text-slate-400">"Contact the hotel"</h3>
-                                <div class="flex flex-col gap-2 text-sm">
-                                    <a
-                                        href=format!("tel:{}", h.phone.replace(' ', ""))
-                                        class="flex items-center gap-2.5 rounded-xl border border-slate-200 px-3 py-2.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-300 hover:shadow-sm"
-                                    >
-                                        <Icon name="phone" class="h-4 w-4 shrink-0 text-blue-700" />
-                                        <span class="min-w-0">
-                                            <span class="block text-xs text-slate-400">"Call"</span>
-                                            <span class="block truncate font-semibold text-slate-800">{h.phone}</span>
-                                        </span>
-                                    </a>
-                                    <a
-                                        href=format!("https://wa.me/{}", h.whatsapp.replace([' ', '+'], ""))
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        class="flex items-center gap-2.5 rounded-xl border border-slate-200 px-3 py-2.5 transition-all duration-200 hover:-translate-y-0.5 hover:border-emerald-300 hover:shadow-sm"
-                                    >
-                                        <Icon name="message" class="h-4 w-4 shrink-0 text-emerald-600" />
-                                        <span class="min-w-0">
-                                            <span class="block text-xs text-slate-400">"WhatsApp"</span>
-                                            <span class="block truncate font-semibold text-slate-800">{h.whatsapp}</span>
-                                        </span>
-                                    </a>
-                                </div>
-                            </div>
+                            {contacts.iter().find(|c| c.is_primary).map(|c| view! {
+                                <p class="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-500">
+                                    {format!(
+                                        "{}{}",
+                                        c.name.clone(),
+                                        c.title.clone().map(|t| format!(" · {t}")).unwrap_or_default(),
+                                    )}
+                                </p>
+                            })}
                         </div>
-                    </div>
-
-                    <div class="mt-3 flex items-start gap-2.5 rounded-2xl bg-amber-50 p-4 text-xs leading-relaxed text-amber-800 ring-1 ring-amber-100">
-                        <Icon name="info" class="mt-0.5 h-4 w-4 shrink-0" />
-                        <span>
-                            <span class="font-bold">"Rates move quickly. "</span>
-                            "Prices shown are for the dates in your search and are confirmed with the hotel at the moment you reserve."
-                        </span>
-                    </div>
+                    </Show>
                 </aside>
             </div>
         </div>
+    }
+}
 
-        // ---- Mobile sticky reserve bar ------------------------------------
-        <div class="sticky bottom-14 z-20 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur-lg sm:bottom-0 lg:hidden">
-            <div class="mx-auto flex max-w-6xl items-center justify-between gap-3">
-                <div>
-                    <p class="text-[11px] text-slate-400">"From"</p>
-                    <p class="text-lg font-extrabold text-slate-900">{format!("ETB {}", thousands(h.price_from))}</p>
-                </div>
-                {match cheapest {
-                    Some(r) => view! {
-                        <A
-                            href=format!("/hotels/{}/reserve/{}", h.id, r.id)
-                            attr:class="sheen flex items-center gap-2 rounded-xl bg-blue-700 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-blue-700/25 active:scale-[0.98]"
-                        >
-                            "Reserve now"
-                            <Icon name="arrow-right" class="h-4 w-4" />
-                        </A>
+/// One bookable room.
+#[component]
+fn RoomRow(room: RoomSummary, hotel_id: i64, currency: String, index: usize) -> impl IntoView {
+    let delay = format!("animation-delay: {}ms", index * 70);
+    let image = room.primary_image.clone().filter(|u| u.starts_with("http"));
+    let was = room.was_price();
+    let price = room.price();
+    let beds = room.bed_summary();
+    let amenities: Vec<String> = room.amenities.iter().take(4).map(|a| a.name.clone()).collect();
+    let href = format!("/hotels/{hotel_id}/reserve/{}", room.id);
+    let discount = room.discount_percent_per_night.unwrap_or(0);
+
+    view! {
+        <article class="reveal card-hover flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white sm:flex-row" style=delay>
+            <div class="relative h-44 w-full shrink-0 overflow-hidden sm:h-auto sm:w-56">
+                {match image {
+                    Some(src) => view! {
+                        <img src=src alt=room.name.clone() loading="lazy"
+                            class="h-full w-full object-cover transition-transform duration-700 hover:scale-105" />
                     }.into_any(),
-                    None => view! { <span></span> }.into_any(),
+                    None => view! {
+                        <div class="flex h-full w-full items-center justify-center bg-slate-100 text-slate-300">
+                            <Icon name="bed" class="h-10 w-10" />
+                        </div>
+                    }.into_any(),
                 }}
+                <Show when=move || (discount > 0)>
+                    <span class="absolute bottom-2 left-2 rounded-full bg-red-600 px-2.5 py-1 text-[11px] font-bold text-white shadow-md">
+                        {format!("-{discount}%")}
+                    </span>
+                </Show>
+            </div>
+
+            <div class="flex flex-1 flex-col gap-4 p-4 sm:flex-row">
+                <div class="min-w-0 flex-1">
+                    <h3 class="text-base font-bold text-slate-900">{room.name.clone()}</h3>
+                    <p class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                        <span class="flex items-center gap-1">
+                            <Icon name="bed" class="h-3.5 w-3.5" />
+                            {if beds.is_empty() { room.room_type.clone().unwrap_or_default() } else { beds }}
+                        </span>
+                        <span class="flex items-center gap-1">
+                            <Icon name="users" class="h-3.5 w-3.5" />
+                            {pluralize(room.guest_capacity, "guest")}
+                        </span>
+                        <span class="flex items-center gap-1">
+                            <Icon name="home" class="h-3.5 w-3.5" />
+                            {format!("Room {}", room.room_number)}
+                        </span>
+                    </p>
+
+                    <ul class="mt-3 flex flex-col gap-1.5">
+                        {room.breakfast_included.then(|| view! {
+                            <li class="flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+                                <Icon name="coffee" class="h-3.5 w-3.5 shrink-0" />
+                                "Breakfast included"
+                            </li>
+                        })}
+                        {amenities.into_iter().map(|a| view! {
+                            <li class="flex items-center gap-1.5 text-xs text-slate-600">
+                                <Icon name="check" class="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                                {a}
+                            </li>
+                        }).collect_view()}
+                        <li class="flex items-center gap-1.5 text-xs text-slate-500">
+                            <Icon name="wallet" class="h-3.5 w-3.5 shrink-0" />
+                            "Pay at the hotel"
+                        </li>
+                    </ul>
+                </div>
+
+                <div class="flex shrink-0 items-end justify-between gap-3 border-t border-slate-100 pt-3 sm:w-40 sm:flex-col sm:items-end sm:border-l sm:border-t-0 sm:pl-4 sm:pt-0">
+                    <div class="sm:text-right">
+                        {was.map(|w| view! {
+                            <p class="text-xs text-slate-400 line-through">{format!("{currency} {}", money_round(w))}</p>
+                        })}
+                        <p class="text-xl font-extrabold text-slate-900">
+                            {format!("{currency} {}", money_round(price))}
+                        </p>
+                        <p class="text-xs text-slate-400">"per night"</p>
+                    </div>
+                    <A
+                        href=href
+                        attr:class="sheen flex items-center justify-center gap-1.5 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-blue-700/20 transition-all duration-200 hover:bg-blue-800 hover:shadow-lg active:scale-[0.98] sm:w-full"
+                    >
+                        "Reserve"
+                        <Icon name="arrow-right" class="h-3.5 w-3.5" />
+                    </A>
+                </div>
+            </div>
+        </article>
+    }
+}
+
+#[component]
+fn Fact(
+    icon: &'static str,
+    label: &'static str,
+    #[prop(into)] value: Signal<String>,
+) -> impl IntoView {
+    view! {
+        <div class="flex items-center gap-2.5 rounded-xl border border-slate-200 bg-white p-3">
+            <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+                <Icon name=icon class="h-4 w-4" />
+            </span>
+            <span class="min-w-0">
+                <span class="block text-[11px] uppercase tracking-wide text-slate-400">{label}</span>
+                <span class="block truncate text-sm font-bold text-slate-800">{move || value.get()}</span>
+            </span>
+        </div>
+    }
+}
+
+#[component]
+fn NotFound(#[prop(into)] message: String) -> impl IntoView {
+    view! {
+        <div class="mx-auto max-w-md px-4 py-24 text-center">
+            <span class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+                <Icon name="search" class="h-6 w-6" />
+            </span>
+            <h1 class="text-xl font-bold text-slate-900">"Hotel not found"</h1>
+            <p class="mt-2 text-sm text-slate-500">{message}</p>
+            <A href="/hotels" attr:class="mt-5 inline-flex rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white hover:bg-blue-800">
+                "Browse all hotels"
+            </A>
+        </div>
+    }
+}
+
+#[component]
+fn HotelSkeleton() -> impl IntoView {
+    view! {
+        <div class="mx-auto max-w-6xl px-4 py-5">
+            <div class="skeleton h-[22rem] rounded-2xl sm:h-[26rem]"></div>
+            <div class="mt-7 grid gap-8 lg:grid-cols-[minmax(0,1fr)_21rem]">
+                <div class="flex flex-col gap-4">
+                    <div class="skeleton h-8 w-2/3 rounded-lg"></div>
+                    <div class="skeleton h-4 w-1/2 rounded-lg"></div>
+                    <div class="skeleton h-24 rounded-xl"></div>
+                    <div class="skeleton h-40 rounded-2xl"></div>
+                    <div class="skeleton h-40 rounded-2xl"></div>
+                </div>
+                <div class="skeleton h-64 rounded-2xl"></div>
             </div>
         </div>
     }

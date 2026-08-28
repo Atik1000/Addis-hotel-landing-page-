@@ -1,43 +1,67 @@
-use crate::components::{
-    tag_icon, thousands, EmptyState, HotelCard, HotelCardCompact, Icon, SearchWidget,
+//! Hotel browsing, backed by `GET /organizations/public/`.
+//!
+//! Filtering, sorting and pagination all happen on the API — the page holds
+//! filter state, turns it into a query, and renders whatever comes back.
+//!
+//! The endpoint returns identity, location, star rating and a logo. It carries
+//! no nightly price, guest score or review count, so the filter rail offers
+//! only what the API can actually apply; a control that silently does nothing
+//! is worse than no control. Price and guest-rating filters can come back the
+//! moment those fields exist upstream.
+
+use crate::api::{
+    hotel_from_prices, list_amenities, list_cities, list_hotels, money_round, Amenity, City,
+    HotelQuery,
 };
-use crate::data::{all_amenities, all_cities, Hotel, HOTELS};
+use crate::components::{
+    EmptyState, HotelApiCard, HotelApiCardCompact, Icon, SearchWidget, SkeletonCard,
+};
 use leptos::prelude::*;
 use leptos_meta::Title;
 use leptos_router::components::A;
 use leptos_router::hooks::use_query_map;
 
-const PER_PAGE: usize = 6;
+const PER_PAGE: u32 = 6;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Sort {
     Recommended,
-    PriceLow,
-    PriceHigh,
-    Rating,
-    Stars,
+    StarsHigh,
+    StarsLow,
+    NameAsc,
+    Newest,
 }
 
 impl Sort {
     fn label(self) -> &'static str {
         match self {
             Sort::Recommended => "Recommended",
-            Sort::PriceLow => "Price: low to high",
-            Sort::PriceHigh => "Price: high to low",
-            Sort::Rating => "Guest rating",
-            Sort::Stars => "Star class",
+            Sort::StarsHigh => "Star class: high to low",
+            Sort::StarsLow => "Star class: low to high",
+            Sort::NameAsc => "Name: A to Z",
+            Sort::Newest => "Recently added",
         }
     }
+
+    /// The `ordering` value the API expects; `None` leaves it to the default.
+    fn ordering(self) -> Option<&'static str> {
+        match self {
+            Sort::Recommended => None,
+            Sort::StarsHigh => Some("-star_rating"),
+            Sort::StarsLow => Some("star_rating"),
+            Sort::NameAsc => Some("name"),
+            Sort::Newest => Some("-created_at"),
+        }
+    }
+
     const ALL: [Sort; 5] = [
         Sort::Recommended,
-        Sort::PriceLow,
-        Sort::PriceHigh,
-        Sort::Rating,
-        Sort::Stars,
+        Sort::StarsHigh,
+        Sort::StarsLow,
+        Sort::NameAsc,
+        Sort::Newest,
     ];
 }
-
-const PRICE_MAX: u32 = 15_000;
 
 #[component]
 pub fn ListingsPage() -> impl IntoView {
@@ -46,133 +70,151 @@ pub fn ListingsPage() -> impl IntoView {
     // ---- Filter state ----------------------------------------------------
     let city = RwSignal::new(String::new());
     let text = RwSignal::new(String::new());
-    let max_price = RwSignal::new(PRICE_MAX);
-    let min_rating = RwSignal::new(0.0f32);
     let star_classes = RwSignal::new(Vec::<u32>::new());
-    let amenities = RwSignal::new(Vec::<String>::new());
-    let deals_only = RwSignal::new(false);
+    let amenity_ids = RwSignal::new(Vec::<i64>::new());
     let sort = RwSignal::new(Sort::Recommended);
     let grid_view = RwSignal::new(false);
-    let page = RwSignal::new(0usize);
+    let page = RwSignal::new(1u32);
     let filters_open = RwSignal::new(false);
     let sort_open = RwSignal::new(false);
 
     // Seed the city filter from `?city=` so a search from the home page lands
     // on pre-filtered results.
+    // Dates arrive from the search widget as `check_in` / `check_out`; the
+    // hotels endpoint filters by availability when both are present, and they
+    // are carried through to the hotel page so its room list matches.
+    let check_in = RwSignal::new(String::new());
+    let check_out = RwSignal::new(String::new());
+
     Effect::new(move |_| {
-        if let Some(c) = query.get().get("city") {
+        let q = query.get();
+        if let Some(c) = q.get("city") {
             let c = c.replace('+', " ");
             if !c.is_empty() {
                 city.set(c);
             }
         }
+        check_in.set(q.get("check_in").unwrap_or_default());
+        check_out.set(q.get("check_out").unwrap_or_default());
     });
 
+    // ---- Reference data --------------------------------------------------
+    let cities = Resource::new(|| (), |_| async move { list_cities(Some(100)).await });
+    // `GET /organizations/public/` has no price field, so one pass over the room
+    // feed supplies the "from" figure for every card on the page.
+    let prices = Resource::new(|| (), |_| async move { hotel_from_prices().await });
+    let amenities = Resource::new(|| (), |_| async move { list_amenities().await });
+
+    // ---- Results ---------------------------------------------------------
+    let hotels = Resource::new(
+        move || {
+            (
+                city.get(),
+                text.get(),
+                star_classes.get(),
+                amenity_ids.get(),
+                sort.get().ordering().map(str::to_owned),
+                page.get(),
+                check_in.get(),
+                check_out.get(),
+            )
+        },
+        |(city, search, stars, amenities, ordering, page, check_in, check_out)| async move {
+            list_hotels(HotelQuery {
+                search: Some(search),
+                city: Some(city),
+                // The endpoint takes a numeric range, so a discrete set of star
+                // classes collapses to its bounds. Picking 3 and 5 therefore
+                // also returns 4s — the API has no "one of" form for this.
+                min_rating: stars.iter().min().map(|s| *s as f32),
+                max_rating: stars.iter().max().map(|s| *s as f32 + 0.99),
+                amenities: (!amenities.is_empty()).then(|| {
+                    amenities
+                        .iter()
+                        .map(i64::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",")
+                }),
+                ordering,
+                page: Some(page),
+                page_size: Some(PER_PAGE),
+                check_in: Some(check_in),
+                check_out: Some(check_out),
+                ..Default::default()
+            })
+            .await
+        },
+    );
+
     let toggle_star = move |s: u32| {
-        star_classes.update(|list| {
-            if let Some(i) = list.iter().position(|x| *x == s) {
+        star_classes.update(|list| match list.iter().position(|x| *x == s) {
+            Some(i) => {
                 list.remove(i);
-            } else {
-                list.push(s);
             }
+            None => list.push(s),
         });
-        page.set(0);
+        page.set(1);
     };
 
-    let toggle_amenity = move |a: String| {
-        amenities.update(|list| {
-            if let Some(i) = list.iter().position(|x| *x == a) {
+    let toggle_amenity = move |id: i64| {
+        amenity_ids.update(|list| match list.iter().position(|x| *x == id) {
+            Some(i) => {
                 list.remove(i);
-            } else {
-                list.push(a);
             }
+            None => list.push(id),
         });
-        page.set(0);
+        page.set(1);
     };
 
     let clear_all = move |_| {
         city.set(String::new());
         text.set(String::new());
-        max_price.set(PRICE_MAX);
-        min_rating.set(0.0);
         star_classes.set(Vec::new());
-        amenities.set(Vec::new());
-        deals_only.set(false);
-        page.set(0);
+        amenity_ids.set(Vec::new());
+        page.set(1);
     };
 
     let active_count = move || {
         let mut n = 0;
-        if !city.get().is_empty() { n += 1; }
-        if !text.get().is_empty() { n += 1; }
-        if max_price.get() < PRICE_MAX { n += 1; }
-        if min_rating.get() > 0.0 { n += 1; }
-        n += star_classes.get().len();
-        n += amenities.get().len();
-        if deals_only.get() { n += 1; }
-        n
+        if !city.get().is_empty() {
+            n += 1;
+        }
+        if !text.get().is_empty() {
+            n += 1;
+        }
+        n + star_classes.get().len() + amenity_ids.get().len()
     };
 
-    // ---- Derived results -------------------------------------------------
-    let results = Memo::new(move |_| {
-        let city_f = city.get().to_lowercase();
-        let text_f = text.get().to_lowercase();
-        let price_f = max_price.get();
-        let rating_f = min_rating.get();
-        let stars_f = star_classes.get();
-        let amen_f = amenities.get();
-        let deals_f = deals_only.get();
-
-        let mut out: Vec<&'static Hotel> = HOTELS
-            .iter()
-            .filter(|h| city_f.is_empty() || h.city.to_lowercase() == city_f)
-            .filter(|h| {
-                text_f.is_empty()
-                    || h.name.to_lowercase().contains(&text_f)
-                    || h.area.to_lowercase().contains(&text_f)
-                    || h.city.to_lowercase().contains(&text_f)
-            })
-            .filter(|h| h.price_from <= price_f)
-            .filter(|h| h.rating >= rating_f)
-            .filter(|h| stars_f.is_empty() || stars_f.contains(&h.star_class))
-            .filter(|h| amen_f.iter().all(|a| h.amenities.contains(&a.as_str())))
-            .filter(|h| !deals_f || h.price_was.is_some())
-            .collect();
-
-        match sort.get() {
-            Sort::Recommended => out.sort_by(|a, b| {
-                b.featured
-                    .cmp(&a.featured)
-                    .then(b.rating.partial_cmp(&a.rating).unwrap_or(std::cmp::Ordering::Equal))
-            }),
-            Sort::PriceLow => out.sort_by_key(|h| h.price_from),
-            Sort::PriceHigh => out.sort_by_key(|h| std::cmp::Reverse(h.price_from)),
-            Sort::Rating => out.sort_by(|a, b| {
-                b.rating.partial_cmp(&a.rating).unwrap_or(std::cmp::Ordering::Equal)
-            }),
-            Sort::Stars => out.sort_by_key(|h| std::cmp::Reverse(h.star_class)),
-        }
-        out
-    });
-
-    let page_count = move || results.get().len().div_ceil(PER_PAGE).max(1);
-    let visible = move || {
-        let all = results.get();
-        let start = page.get() * PER_PAGE;
-        all.into_iter().skip(start).take(PER_PAGE).collect::<Vec<_>>()
-    };
-
-    // Keep the page index inside range when filters shrink the result set.
-    Effect::new(move |_| {
-        let max = page_count().saturating_sub(1);
-        if page.get() > max {
-            page.set(max);
-        }
-    });
+    // Counts and pagination follow the API's `meta`, not a local tally. Every
+    // reader goes through `Suspend`/`await` rather than `resource.get()`: a
+    // bare closure escapes its Suspense boundary even when it looks nested
+    // inside one, which Leptos warns causes hydration mismatches.
 
     let heading = move || {
         let c = city.get();
-        if c.is_empty() { "Hotels across the Horn of Africa".to_string() } else { format!("Hotels in {c}") }
+        if c.is_empty() {
+            "Hotels across the Horn of Africa".to_string()
+        } else {
+            format!("Hotels in {c}")
+        }
+    };
+
+    // Mirror the amenity catalogue into a plain signal. Chip labels are read
+    // outside any Suspense boundary, and an effect is the one reader Leptos
+    // allows there; chips only appear after a client-side click anyway.
+    let amenity_list = RwSignal::new(Vec::<Amenity>::new());
+    Effect::new(move |_| {
+        if let Some(Ok(list)) = amenities.get() {
+            amenity_list.set(list);
+        }
+    });
+    let amenity_name = move |id: i64| {
+        amenity_list
+            .get()
+            .iter()
+            .find(|a| a.id == id)
+            .map(|a| a.name.clone())
+            .unwrap_or_else(|| format!("Amenity {id}"))
     };
 
     view! {
@@ -185,7 +227,15 @@ pub fn ListingsPage() -> impl IntoView {
                         <h1 class="text-2xl font-extrabold tracking-tight text-slate-900">{heading}</h1>
                         <p class="mt-1 flex items-center gap-1.5 text-sm text-slate-500">
                             <Icon name="check-circle" class="h-3.5 w-3.5 text-emerald-600" />
-                            {move || format!("{} verified properties match your search", results.get().len())}
+                            <Suspense fallback=|| view! { <span>"Searching…"</span> }>
+                                {move || Suspend::new(async move {
+                                    let n = hotels.await.map(|p| p.meta.count).unwrap_or(0);
+                                    format!(
+                                        "{n} verified {} match your search",
+                                        if n == 1 { "property" } else { "properties" },
+                                    )
+                                })}
+                            </Suspense>
                         </p>
                     </div>
                 </div>
@@ -218,10 +268,10 @@ pub fn ListingsPage() -> impl IntoView {
                                 <Icon name="search" class="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                                 <input
                                     type="text"
-                                    placeholder="Hotel or area"
+                                    placeholder="Hotel, area or city"
                                     class="w-full rounded-lg border border-slate-300 py-2 pl-8 pr-3 text-sm transition-colors focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100"
                                     prop:value=text
-                                    on:input:target=move |ev| { text.set(ev.target().value()); page.set(0); }
+                                    on:change:target=move |ev| { text.set(ev.target().value()); page.set(1); }
                                 />
                             </div>
                         </FilterCard>
@@ -231,40 +281,25 @@ pub fn ListingsPage() -> impl IntoView {
                                 <FilterRadio
                                     label="All cities".to_string()
                                     checked=Signal::derive(move || city.get().is_empty())
-                                    on_pick=Callback::new(move |_| { city.set(String::new()); page.set(0); })
+                                    on_pick=Callback::new(move |_| { city.set(String::new()); page.set(1); })
                                 />
-                                {all_cities().into_iter().map(|c| {
-                                    let c_owned = c.to_string();
-                                    let c_check = c.to_string();
-                                    view! {
-                                        <FilterRadio
-                                            label=c_owned.clone()
-                                            checked=Signal::derive(move || city.get() == c_check)
-                                            on_pick=Callback::new(move |_| { city.set(c_owned.clone()); page.set(0); })
-                                        />
-                                    }
-                                }).collect_view()}
-                            </div>
-                        </FilterCard>
-
-                        <FilterCard title="Price per night" icon="tag">
-                            <input
-                                type="range"
-                                min="900"
-                                max="15000"
-                                step="100"
-                                class="w-full accent-blue-700"
-                                prop:value=move || max_price.get().to_string()
-                                on:input:target=move |ev| {
-                                    max_price.set(ev.target().value().parse().unwrap_or(PRICE_MAX));
-                                    page.set(0);
-                                }
-                            />
-                            <div class="mt-1.5 flex items-center justify-between text-xs">
-                                <span class="text-slate-400">"ETB 900"</span>
-                                <span class="rounded-md bg-blue-50 px-2 py-0.5 font-bold text-blue-700 tabular-nums">
-                                    {move || format!("up to ETB {}", thousands(max_price.get()))}
-                                </span>
+                                <Suspense fallback=|| view! { <p class="px-2 py-1.5 text-sm text-slate-400">"Loading cities…"</p> }>
+                                    {move || Suspend::new(async move {
+                                        let list: Vec<City> = cities.await.map(|p| p.items).unwrap_or_default();
+                                        list.into_iter().map(|c| {
+                                            let name = c.city.clone();
+                                            let pick = c.city.clone();
+                                            let check = c.city.clone();
+                                            view! {
+                                                <FilterRadio
+                                                    label=name
+                                                    checked=Signal::derive(move || city.get() == check)
+                                                    on_pick=Callback::new(move |_| { city.set(pick.clone()); page.set(1); })
+                                                />
+                                            }
+                                        }).collect_view()
+                                    })}
+                                </Suspense>
                             </div>
                         </FilterCard>
 
@@ -289,87 +324,82 @@ pub fn ListingsPage() -> impl IntoView {
                             </div>
                         </FilterCard>
 
-                        <FilterCard title="Guest rating" icon="smile">
-                            <div class="flex flex-col gap-1">
-                                {[(0.0f32, "Any rating"), (3.5, "3.5+ Good"), (4.0, "4.0+ Very good"), (4.5, "4.5+ Exceptional")]
-                                    .into_iter()
-                                    .map(|(value, label)| view! {
-                                        <FilterRadio
-                                            label=label.to_string()
-                                            checked=Signal::derive(move || (min_rating.get() - value).abs() < 0.01)
-                                            on_pick=Callback::new(move |_| { min_rating.set(value); page.set(0); })
-                                        />
-                                    })
-                                    .collect_view()}
-                            </div>
-                        </FilterCard>
-
                         <FilterCard title="Amenities" icon="sliders">
-                            <div class="flex max-h-56 flex-col gap-0.5 overflow-y-auto pr-1">
-                                {all_amenities().into_iter().map(|a| {
-                                    let a_owned = a.to_string();
-                                    let a_check = a.to_string();
-                                    view! {
-                                        <label class="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-slate-600 transition-colors hover:bg-slate-50">
-                                            <input
-                                                type="checkbox"
-                                                class="h-4 w-4 rounded border-slate-300 accent-blue-700"
-                                                prop:checked=move || amenities.get().contains(&a_check)
-                                                on:change=move |_| toggle_amenity(a_owned.clone())
-                                            />
-                                            <Icon name=tag_icon(a) class="h-3.5 w-3.5 shrink-0 text-slate-400" />
-                                            <span class="truncate">{a}</span>
-                                        </label>
+                            <Suspense fallback=|| view! { <p class="text-sm text-slate-400">"Loading amenities…"</p> }>
+                                {move || Suspend::new(async move {
+                                    let list: Vec<Amenity> = amenities.await.unwrap_or_default();
+                                    if list.is_empty() {
+                                        return view! {
+                                            <p class="text-sm text-slate-400">"No amenities published yet."</p>
+                                        }.into_any();
                                     }
-                                }).collect_view()}
-                            </div>
+                                    view! {
+                                        <div class="flex max-h-56 flex-col gap-0.5 overflow-y-auto pr-1">
+                                            {list.into_iter().map(|a| {
+                                                let id = a.id;
+                                                view! {
+                                                    <button
+                                                        on:click=move |_| toggle_amenity(id)
+                                                        class="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm text-slate-600 transition-colors hover:bg-slate-50"
+                                                    >
+                                                        <span class=move || format!(
+                                                            "flex h-4 w-4 shrink-0 items-center justify-center rounded border-2 transition-colors {}",
+                                                            if amenity_ids.get().contains(&id) {
+                                                                "border-blue-700 bg-blue-700 text-white"
+                                                            } else {
+                                                                "border-slate-300"
+                                                            }
+                                                        )>
+                                                            <Show when=move || amenity_ids.get().contains(&id)>
+                                                                <Icon name="check" class="h-2.5 w-2.5" />
+                                                            </Show>
+                                                        </span>
+                                                        <span class="truncate">{a.name}</span>
+                                                    </button>
+                                                }
+                                            }).collect_view()}
+                                        </div>
+                                    }.into_any()
+                                })}
+                            </Suspense>
                         </FilterCard>
-
-                        <label class="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3.5 transition-colors hover:border-blue-200">
-                            <span class="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                                <Icon name="percent" class="h-4 w-4 text-red-600" />
-                                "Deals only"
-                            </span>
-                            <input
-                                type="checkbox"
-                                class="h-4 w-4 rounded border-slate-300 accent-blue-700"
-                                prop:checked=deals_only
-                                on:change:target=move |ev| { deals_only.set(ev.target().checked()); page.set(0); }
-                            />
-                        </label>
-
-                        <Show when=move || (active_count() > 0)>
-                            <button
-                                on:click=clear_all
-                                class="flex items-center justify-center gap-1.5 rounded-xl border border-slate-300 py-2.5 text-sm font-semibold text-slate-600 transition-colors hover:border-red-300 hover:bg-red-50 hover:text-red-600"
-                            >
-                                <Icon name="x-circle" class="h-4 w-4" />
-                                {move || format!("Clear {} filters", active_count())}
-                            </button>
-                        </Show>
 
                         <button
-                            class="rounded-xl bg-blue-700 py-3 text-sm font-bold text-white lg:hidden"
-                            on:click=move |_| filters_open.set(false)
+                            on:click=clear_all
+                            class="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-semibold text-slate-600 transition-colors hover:bg-slate-50"
                         >
-                            {move || format!("Show {} hotels", results.get().len())}
+                            "Clear all filters"
+                        </button>
+                    </div>
+
+                    <div class="mt-4 lg:hidden">
+                        <button
+                            on:click=move |_| filters_open.set(false)
+                            class="w-full rounded-xl bg-blue-700 px-5 py-3 text-sm font-bold text-white"
+                        >
+                            <Transition fallback=|| view! { "Show hotels" }>
+                                {move || Suspend::new(async move {
+                                    let n = hotels.await.map(|p| p.meta.count).unwrap_or(0);
+                                    format!("Show {n} hotels")
+                                })}
+                            </Transition>
                         </button>
                     </div>
                 </div>
             </aside>
 
             // ================= RESULTS =================
-            <div>
+            <div class="min-w-0">
                 <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
                     <div class="flex items-center gap-2">
                         <button
-                            class="relative flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 lg:hidden"
                             on:click=move |_| filters_open.set(true)
+                            class="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 lg:hidden"
                         >
                             <Icon name="sliders" class="h-4 w-4" />
                             "Filters"
                             <Show when=move || (active_count() > 0)>
-                                <span class="ml-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-700 px-1.5 text-[11px] font-bold text-white">
+                                <span class="flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-700 px-1 text-[11px] font-bold text-white">
                                     {active_count}
                                 </span>
                             </Show>
@@ -378,25 +408,24 @@ pub fn ListingsPage() -> impl IntoView {
                         <div class="relative">
                             <button
                                 on:click=move |_| sort_open.update(|v| *v = !*v)
-                                class="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
+                                class="flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50"
                             >
-                                <Icon name="sort" class="h-4 w-4" />
-                                <span class="hidden sm:inline">{move || sort.get().label()}</span>
-                                <span class="sm:hidden">"Sort"</span>
-                                <Icon name="chevron-down" class="h-3 w-3" />
+                                <Icon name="sort" class="h-4 w-4 text-slate-400" />
+                                {move || sort.get().label()}
+                                <Icon name="chevron-down" class="h-3.5 w-3.5 text-slate-400" />
                             </button>
                             <Show when=move || sort_open.get()>
-                                <div class="absolute left-0 top-full z-30 mt-1 w-56 animate-fade-down overflow-hidden rounded-xl border border-slate-200 bg-white p-1 shadow-xl">
+                                <div class="absolute left-0 top-full z-20 mt-1.5 w-56 animate-scale-in rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
                                     {Sort::ALL.into_iter().map(|s| view! {
                                         <button
-                                            on:click=move |_| { sort.set(s); sort_open.set(false); page.set(0); }
+                                            on:click=move |_| { sort.set(s); sort_open.set(false); page.set(1); }
                                             class=move || format!(
-                                                "flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-slate-50 {}",
-                                                if sort.get() == s { "font-bold text-blue-700" } else { "text-slate-600" }
+                                                "flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition-colors {}",
+                                                if sort.get() == s { "bg-blue-50 font-semibold text-blue-700" } else { "text-slate-600 hover:bg-slate-50" }
                                             )
                                         >
                                             {s.label()}
-                                            <Show when=move || sort.get() == s>
+                                            <Show when=move || (sort.get() == s)>
                                                 <Icon name="check" class="h-3.5 w-3.5" />
                                             </Show>
                                         </button>
@@ -407,32 +436,30 @@ pub fn ListingsPage() -> impl IntoView {
                     </div>
 
                     <div class="flex items-center gap-3">
-                        <span class="hidden text-sm text-slate-500 sm:inline">
-                            {move || {
-                                let total = results.get().len();
-                                let start = if total == 0 { 0 } else { page.get() * PER_PAGE + 1 };
-                                let end = ((page.get() + 1) * PER_PAGE).min(total);
-                                format!("{start}–{end} of {total}")
-                            }}
+                        <span class="hidden text-sm text-slate-500 sm:block">
+                            <Transition fallback=|| view! { "" }>
+                            {move || Suspend::new(async move {
+                                let m = hotels.await.map(|p| p.meta).unwrap_or_default();
+                                if m.count == 0 { String::new() } else {
+                                    let first = (m.page.saturating_sub(1)) * PER_PAGE + 1;
+                                    let last = (first + PER_PAGE - 1).min(m.count);
+                                    format!("{first}–{last} of {}", m.count)
+                                }
+                            })}
+                            </Transition>
                         </span>
                         <div class="flex overflow-hidden rounded-lg border border-slate-300">
                             <button
                                 aria-label="List view"
                                 on:click=move |_| grid_view.set(false)
-                                class=move || format!(
-                                    "flex h-9 w-9 items-center justify-center transition-colors {}",
-                                    if grid_view.get() { "bg-white text-slate-500 hover:bg-slate-50" } else { "bg-blue-700 text-white" }
-                                )
+                                class=move || format!("flex h-8 w-8 items-center justify-center transition-colors {}", if grid_view.get() { "text-slate-400 hover:bg-slate-50" } else { "bg-blue-700 text-white" })
                             >
                                 <Icon name="list" class="h-4 w-4" />
                             </button>
                             <button
                                 aria-label="Grid view"
                                 on:click=move |_| grid_view.set(true)
-                                class=move || format!(
-                                    "flex h-9 w-9 items-center justify-center border-l border-slate-300 transition-colors {}",
-                                    if grid_view.get() { "bg-blue-700 text-white" } else { "bg-white text-slate-500 hover:bg-slate-50" }
-                                )
+                                class=move || format!("flex h-8 w-8 items-center justify-center transition-colors {}", if grid_view.get() { "bg-blue-700 text-white" } else { "text-slate-400 hover:bg-slate-50" })
                             >
                                 <Icon name="grid" class="h-4 w-4" />
                             </button>
@@ -444,116 +471,155 @@ pub fn ListingsPage() -> impl IntoView {
                 <Show when=move || (active_count() > 0)>
                     <div class="mb-4 flex flex-wrap items-center gap-2">
                         <Show when=move || !city.get().is_empty()>
-                            <Chip label=Signal::derive(move || format!("City: {}", city.get())) on_clear=Callback::new(move |_| city.set(String::new())) />
+                            <Chip
+                                label=Signal::derive(move || city.get())
+                                on_clear=Callback::new(move |_| { city.set(String::new()); page.set(1); })
+                            />
                         </Show>
                         <Show when=move || !text.get().is_empty()>
-                            <Chip label=Signal::derive(move || format!("\"{}\"", text.get())) on_clear=Callback::new(move |_| text.set(String::new())) />
-                        </Show>
-                        <Show when=move || (max_price.get() < PRICE_MAX)>
-                            <Chip label=Signal::derive(move || format!("Under ETB {}", thousands(max_price.get()))) on_clear=Callback::new(move |_| max_price.set(PRICE_MAX)) />
-                        </Show>
-                        <Show when=move || (min_rating.get() > 0.0)>
-                            <Chip label=Signal::derive(move || format!("{:.1}+ rating", min_rating.get())) on_clear=Callback::new(move |_| min_rating.set(0.0)) />
-                        </Show>
-                        <Show when=move || deals_only.get()>
-                            <Chip label=Signal::derive(move || "Deals only".to_string()) on_clear=Callback::new(move |_| deals_only.set(false)) />
+                            <Chip
+                                label=Signal::derive(move || format!("\"{}\"", text.get()))
+                                on_clear=Callback::new(move |_| { text.set(String::new()); page.set(1); })
+                            />
                         </Show>
                         {move || star_classes.get().into_iter().map(|s| view! {
                             <Chip
-                                label=Signal::derive(move || format!("{s}-star"))
+                                label=Signal::derive(move || format!("{s} star"))
                                 on_clear=Callback::new(move |_| toggle_star(s))
                             />
                         }).collect_view()}
-                        {move || amenities.get().into_iter().map(|a| {
-                            let a2 = a.clone();
-                            let a3 = a.clone();
-                            view! {
-                                <Chip
-                                    label=Signal::derive(move || a2.clone())
-                                    on_clear=Callback::new(move |_| toggle_amenity(a3.clone()))
-                                />
-                            }
+                        {move || amenity_ids.get().into_iter().map(|id| view! {
+                            <Chip
+                                label=Signal::derive(move || amenity_name(id))
+                                on_clear=Callback::new(move |_| toggle_amenity(id))
+                            />
                         }).collect_view()}
                     </div>
                 </Show>
 
                 // ---- Result list --------------------------------------------
-                <Show
-                    when=move || !visible().is_empty()
-                    fallback=move || view! {
-                        <EmptyState
-                            icon="search"
-                            title="No hotels match those filters"
-                            body="Try widening the price range, removing an amenity, or searching a different city."
-                        >
-                            <button
-                                on:click=clear_all
-                                class="rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-blue-800"
-                            >
-                                "Clear all filters"
-                            </button>
-                        </EmptyState>
-                    }
-                >
-                    <div class=move || if grid_view.get() {
-                        "grid gap-5 sm:grid-cols-2 xl:grid-cols-3"
-                    } else {
-                        "flex flex-col gap-4"
-                    }>
-                        {move || visible().into_iter().enumerate().map(|(i, h)| {
-                            let delay = format!("animation-delay: {}ms", i * 60);
-                            view! {
-                                <div class="animate-fade-up" style=delay>
-                                    <Show
-                                        when=move || grid_view.get()
-                                        fallback=move || view! { <HotelCard hotel=h /> }
-                                    >
-                                        <HotelCardCompact hotel=h />
-                                    </Show>
-                                </div>
-                            }
-                        }).collect_view()}
+                <Transition fallback=move || view! {
+                    <div class="flex flex-col gap-4">
+                        {(0..3).map(|_| view! { <SkeletonCard/> }).collect_view()}
                     </div>
-                </Show>
+                }>
+                    {move || Suspend::new(async move {
+                        // Awaited, not read: a plain `.get()` here resolves to
+                        // `None` on the first paint and the cards lose their price.
+                        let from_prices = prices.await.unwrap_or_default();
+                        match hotels.await {
+                            Err(e) => view! {
+                                <EmptyState
+                                    icon="alert"
+                                    title="We couldn't reach the hotel service"
+                                    body="The listing service did not respond. Please try again in a moment."
+                                >
+                                    <p class="max-w-lg break-words rounded-lg bg-slate-50 px-3 py-2 font-mono text-xs text-slate-500">
+                                        {e.to_string()}
+                                    </p>
+                                </EmptyState>
+                            }.into_any(),
+                            Ok(pageful) if pageful.items.is_empty() => view! {
+                                <EmptyState
+                                    icon="search"
+                                    title="No hotels match those filters"
+                                    body="Try removing an amenity, widening the star class, or searching a different city."
+                                >
+                                    <button
+                                        on:click=clear_all
+                                        class="rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-blue-800"
+                                    >
+                                        "Clear all filters"
+                                    </button>
+                                </EmptyState>
+                            }.into_any(),
+                            Ok(pageful) => view! {
+                                <div class=move || if grid_view.get() {
+                                    "grid gap-5 sm:grid-cols-2 xl:grid-cols-3"
+                                } else {
+                                    "flex flex-col gap-4"
+                                }>
+                                    {
+                                        let from = from_prices;
+                                        let dates = date_query(&check_in.get(), &check_out.get());
+                                        pageful.items.into_iter().enumerate().map(|(i, h)| {
+                                            let delay = format!("animation-delay: {}ms", i * 60);
+                                            let compact = h.clone();
+                                            let price = from.iter().find(|(id, _)| *id == h.id).map(|(_, p)| *p);
+                                            let d1 = dates.clone();
+                                            let d2 = dates.clone();
+                                            view! {
+                                                <div class="animate-fade-up" style=delay>
+                                                    <Show
+                                                        when=move || grid_view.get()
+                                                        fallback={
+                                                            let h = h.clone();
+                                                            let d = d1.clone();
+                                                            move || view! {
+                                                                <HotelApiCard hotel=h.clone() from_price=price dates=d.clone() />
+                                                            }
+                                                        }
+                                                    >
+                                                        <HotelApiCardCompact hotel=compact.clone() from_price=price dates=d2.clone() />
+                                                    </Show>
+                                                </div>
+                                            }
+                                        }).collect_view()
+                                    }
+                                </div>
+                            }.into_any(),
+                        }
+                    })}
+                </Transition>
 
                 // ---- Pagination ---------------------------------------------
-                <Show when=move || (page_count() > 1)>
-                    <div class="mt-8 flex items-center justify-center gap-1.5 text-sm">
-                        <button
-                            aria-label="Previous page"
-                            class="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                            disabled=move || (page.get() == 0)
-                            on:click=move |_| page.update(|p| *p = p.saturating_sub(1))
-                        >
-                            <Icon name="chevron-left" class="h-4 w-4" />
-                        </button>
+                // Rendered from an awaited `meta` rather than a reactive read:
+                // `<Show when=…>` re-evaluates its predicate in its own scope,
+                // which escapes an enclosing Transition and trips Leptos's
+                // hydration-mismatch warning.
+                <Transition fallback=|| ()>
+                    {move || Suspend::new(async move {
+                        let m = hotels.await.map(|p| p.meta).unwrap_or_default();
+                        let pages = m.pages.max(1);
+                        (pages > 1).then(|| view! {
+                            <div class="mt-8 flex items-center justify-center gap-1.5 text-sm">
+                                <button
+                                    aria-label="Previous page"
+                                    class="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                    disabled=move || (page.get() <= 1)
+                                    on:click=move |_| page.update(|p| *p = (*p).saturating_sub(1).max(1))
+                                >
+                                    <Icon name="chevron-left" class="h-4 w-4" />
+                                </button>
 
-                        {move || (0..page_count()).map(|i| view! {
-                            <button
-                                on:click=move |_| page.set(i)
-                                class=move || format!(
-                                    "flex h-9 min-w-9 items-center justify-center rounded-lg px-3 font-semibold transition-all duration-200 {}",
-                                    if page.get() == i {
-                                        "bg-blue-700 text-white shadow-md shadow-blue-700/25"
-                                    } else {
-                                        "border border-slate-300 text-slate-600 hover:-translate-y-0.5 hover:bg-slate-50"
-                                    }
-                                )
-                            >
-                                {i + 1}
-                            </button>
-                        }).collect_view()}
+                                {(1..=pages).map(|i| view! {
+                                    <button
+                                        on:click=move |_| page.set(i)
+                                        class=move || format!(
+                                            "flex h-9 min-w-9 items-center justify-center rounded-lg px-3 font-semibold transition-all duration-200 {}",
+                                            if page.get() == i {
+                                                "bg-blue-700 text-white shadow-md shadow-blue-700/25"
+                                            } else {
+                                                "border border-slate-300 text-slate-600 hover:-translate-y-0.5 hover:bg-slate-50"
+                                            }
+                                        )
+                                    >
+                                        {i}
+                                    </button>
+                                }).collect_view()}
 
-                        <button
-                            aria-label="Next page"
-                            class="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                            disabled=move || (page.get() + 1 >= page_count())
-                            on:click=move |_| page.update(|p| *p += 1)
-                        >
-                            <Icon name="chevron-right" class="h-4 w-4" />
-                        </button>
-                    </div>
-                </Show>
+                                <button
+                                    aria-label="Next page"
+                                    class="flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                                    disabled=move || (page.get() >= pages)
+                                    on:click=move |_| page.update(|p| *p += 1)
+                                >
+                                    <Icon name="chevron-right" class="h-4 w-4" />
+                                </button>
+                            </div>
+                        })
+                    })}
+                </Transition>
 
                 <div class="mt-10 flex flex-col items-center gap-2 rounded-2xl border border-blue-100 bg-blue-50/60 px-6 py-7 text-center">
                     <Icon name="headset" class="h-7 w-7 text-blue-700" />
@@ -627,4 +693,13 @@ fn Chip(#[prop(into)] label: Signal<String>, on_clear: Callback<()>) -> impl Int
             </button>
         </span>
     }
+}
+
+/// The dates the guest searched, as a query string to append to a hotel link,
+/// so its room list opens filtered to the same range.
+fn date_query(check_in: &str, check_out: &str) -> String {
+    if check_in.is_empty() || check_out.is_empty() {
+        return String::new();
+    }
+    format!("?check_in={check_in}&check_out={check_out}")
 }

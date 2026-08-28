@@ -40,8 +40,10 @@ Outputs the server binary to `target/release/` and the site assets to
 
 ```
 src/
+  api.rs          Server functions wrapping the Addis Hotel Booking API
   app.rs          Router, shell and the route table
-  data.rs         Hotel, room and review fixtures (no backend yet)
+  data.rs         Static marketing copy: testimonials, FAQ, steps, stat labels
+  store.rs        Bookings remembered in the visitor's browser
   components/     Header, footer, search widget, hotel cards, gallery, toasts
   pages/          One module per route
 style/
@@ -63,7 +65,47 @@ style/
 | `/how-it-works`, `/about`, `/contact`, `/faq` | Content pages |
 | `/terms`, `/privacy` | Legal |
 
+## API
+
+Every hotel, room, price, review and booking comes from the Addis Hotel Booking
+API at `https://addisapi.pastaromatour.com/api/v1`. Override the base with
+`ADDIS_API_BASE` to point a deployment at another backend.
+
+Calls run inside Leptos server functions rather than from the browser, so the
+listing and detail pages are server-rendered for search engines and the browser
+never talks to a second origin. `src/api.rs` holds the whole client.
+
+What is left in `src/data.rs` is the portal's own editorial — testimonials, the
+FAQ, the how-it-works steps — not hotel data. The headline figures are counted
+live by `portal_stats()`, so the site never advertises inventory it does not
+carry.
+
+### Booking
+
+No accounts. The flow is:
+
+1. `POST /reservations/public/quote/` prices the stay as the guest changes dates
+   or party size, and rejects an impossible or already-booked range up front.
+2. `POST /reservations/public/book/` creates the reservation against nothing but
+   a name and one contact detail.
+3. Nothing is charged. The guest pays the hotel on arrival.
+
+### Retrieving a booking
+
+The API reads a booking back only after a one-time code sent to the email or
+phone on it (`retrieve/request-otp/`, then `retrieve/`). There is no endpoint
+that lists a guest's reservations, so **"My reservations" means the bookings made
+or retrieved in this browser** — `src/store.rs` caches each one at the moment we
+legitimately hold it. Clearing site data hides the list; the reservations
+themselves are always recoverable with a reference and a code.
+
+### Missing upstream
+
+The public hotels endpoint carries no photo, guest score or nightly price. Cards
+therefore fall back to the hotel's logo or a monogram, and the "from" price is
+summarised in one pass over `/rooms/public/` by `hotel_from_prices()` rather than
+fetched per card.
+
 ## Status
 
-The UI is complete and driven entirely by the fixtures in `src/data.rs`; there
-is no API wired up yet. Replacing those lookups is the next step.
+Complete and live at <https://addis.pastaromatour.com>.

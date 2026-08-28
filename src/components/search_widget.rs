@@ -4,7 +4,7 @@
 //! the listings page can pick them up (and so a search is linkable).
 
 use crate::components::Icon;
-use crate::data::CITIES;
+use crate::api::list_cities;
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
 
@@ -29,22 +29,30 @@ pub fn SearchWidget(
 ) -> impl IntoView {
     let navigate = use_navigate();
     let destination = RwSignal::new(initial_destination.to_string());
-    let check_in = RwSignal::new("2026-09-04".to_string());
-    let check_out = RwSignal::new("2026-09-06".to_string());
+    // Seeded from tomorrow so the dates are always bookable; the API rejects a
+    // check-in in the past.
+    let check_in = RwSignal::new(default_date(1));
+    let check_out = RwSignal::new(default_date(3));
     let guests = RwSignal::new(2u32);
     let rooms = RwSignal::new(1u32);
     let suggestions_open = RwSignal::new(false);
     let guests_open = RwSignal::new(false);
 
+    let cities = Resource::new(|| (), |_| async move { list_cities(Some(100)).await });
     let matches = move || {
         let q = destination.get().to_lowercase();
-        CITIES
-            .iter()
+        cities
+            .get()
+            .and_then(Result::ok)
+            .map(|p| p.items)
+            .unwrap_or_default()
+            .into_iter()
             .filter(|c| {
                 q.is_empty()
-                    || c.name.to_lowercase().contains(&q)
-                    || c.country.to_lowercase().contains(&q)
+                    || c.city.to_lowercase().contains(&q)
+                    || c.country.as_deref().unwrap_or("").to_lowercase().contains(&q)
             })
+            .take(8)
             .collect::<Vec<_>>()
     };
 
@@ -52,7 +60,7 @@ pub fn SearchWidget(
         let navigate = navigate.clone();
         move |_| {
             let query = format!(
-                "/hotels?city={}&in={}&out={}&guests={}&rooms={}",
+                "/hotels?city={}&check_in={}&check_out={}&guests={}&rooms={}",
                 encode(&destination.get()),
                 encode(&check_in.get()),
                 encode(&check_out.get()),
@@ -118,19 +126,31 @@ pub fn SearchWidget(
                         <div class="absolute left-0 right-0 top-full z-30 mt-1.5 max-h-72 animate-fade-down overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xl shadow-slate-900/15">
                             <p class="px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">"Popular destinations"</p>
                             {move || matches().into_iter().map(|c| {
-                                let name = c.name;
+                                let name = c.city.clone();
+                                let thumb = c.featured_image.clone().filter(|u| u.starts_with("http"));
                                 view! {
                                     <button
                                         class="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-blue-50"
                                         on:click=move |_| {
-                                            destination.set(name.to_string());
+                                            destination.set(name.clone());
                                             suggestions_open.set(false);
                                         }
                                     >
-                                        <img src=c.image alt="" class="h-9 w-9 shrink-0 rounded-lg object-cover" />
+                                        {match thumb {
+                                            Some(src) => view! {
+                                                <img src=src alt="" class="h-9 w-9 shrink-0 rounded-lg object-cover" />
+                                            }.into_any(),
+                                            None => view! {
+                                                <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
+                                                    <Icon name="map-pin" class="h-4 w-4" />
+                                                </span>
+                                            }.into_any(),
+                                        }}
                                         <span class="min-w-0 flex-1">
-                                            <span class="block truncate text-sm font-semibold text-slate-800">{c.name}</span>
-                                            <span class="block truncate text-xs text-slate-400">{c.country}</span>
+                                            <span class="block truncate text-sm font-semibold text-slate-800">{c.city.clone()}</span>
+                                            <span class="block truncate text-xs text-slate-400">
+                                                {c.country.clone().unwrap_or_default()}
+                                            </span>
                                         </span>
                                         <span class="shrink-0 text-xs font-medium text-slate-400">
                                             {format!("{} hotels", c.hotel_count)}
@@ -265,5 +285,27 @@ fn Stepper(
                 </button>
             </span>
         </div>
+    }
+}
+
+/// An ISO date `offset` days from today. Empty on the server, where there is no
+/// clock the guest would recognise — hydration fills it in.
+fn default_date(offset: i64) -> String {
+    #[cfg(feature = "hydrate")]
+    {
+        let now = js_sys::Date::new_0();
+        let shifted = js_sys::Date::new(&js_sys::Date::new_0().into());
+        shifted.set_date(now.get_date() + offset as u32);
+        return format!(
+            "{:04}-{:02}-{:02}",
+            shifted.get_full_year(),
+            shifted.get_month() + 1,
+            shifted.get_date(),
+        );
+    }
+    #[cfg(not(feature = "hydrate"))]
+    {
+        let _ = offset;
+        String::new()
     }
 }

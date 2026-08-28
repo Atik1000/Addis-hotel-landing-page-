@@ -1,4 +1,5 @@
 use crate::components::{Icon, SectionHeading, TrustBar};
+use crate::api::portal_stats;
 use crate::data::{HOW_IT_WORKS, STATS};
 use leptos::prelude::*;
 use leptos_meta::Title;
@@ -26,6 +27,7 @@ const TIMELINE: &[(&str, &str, &str)] = &[
 
 #[component]
 pub fn AboutPage() -> impl IntoView {
+    let stats = Resource::new(|| (), |_| async move { portal_stats().await });
     view! {
         <Title text="About us — Horn of Africa Hotel Portal" />
 
@@ -62,7 +64,12 @@ pub fn AboutPage() -> impl IntoView {
                                 <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-50 text-blue-700">
                                     <Icon name=s.icon class="h-5 w-5" />
                                 </span>
-                                <span class="text-3xl font-extrabold tracking-tight text-slate-900">{s.value}</span>
+                                <span class="text-3xl font-extrabold tracking-tight text-slate-900">
+                                    {move || match stats.get().and_then(Result::ok) {
+                                        Some(live) => s.value_from(&live),
+                                        None => "—".to_string(),
+                                    }}
+                                </span>
                                 <span class="text-sm text-slate-500">{s.label}</span>
                             </div>
                         }

@@ -1,15 +1,29 @@
 use crate::components::{
-    thousands, AccordionItem, HotelCardCompact, Icon, SearchWidget, SectionHeading, Stars, TrustBar,
+    AccordionItem, Icon, SearchWidget, SectionHeading, Stars, TrustBar,
 };
-use crate::data::{featured_hotels, CITIES, FAQS, HOW_IT_WORKS, STATS, TESTIMONIALS};
+use crate::api::{
+    hotel_from_prices, list_cities, list_hotels, money_round, portal_stats, HotelQuery,
+};
+use crate::data::{FAQS, HOW_IT_WORKS, STATS, TESTIMONIALS};
 use leptos::prelude::*;
 use leptos_meta::Title;
 use leptos_router::components::A;
 
 #[component]
 pub fn HomePage() -> impl IntoView {
-    let featured = featured_hotels();
-    let cheapest = featured.iter().map(|h| h.price_from).min().unwrap_or(0);
+    // The home page rails are live: cities with their hotel counts and
+    // from-price, and the highest-rated properties currently listed.
+    let cities = Resource::new(|| (), |_| async move { list_cities(Some(6)).await });
+    let featured = Resource::new(|| (), |_| async move {
+        list_hotels(HotelQuery {
+            ordering: Some("-star_rating".to_string()),
+            page_size: Some(6),
+            ..Default::default()
+        })
+        .await
+    });
+    let prices = Resource::new(|| (), |_| async move { hotel_from_prices().await });
+    let stats = Resource::new(|| (), |_| async move { portal_stats().await });
 
     view! {
         <Title text="Horn of Africa Hotel Portal — Discover & Reserve Hotels" />
@@ -31,7 +45,10 @@ pub fn HomePage() -> impl IntoView {
                             <span class="absolute inline-flex h-full w-full animate-pulse-ring rounded-full bg-emerald-400"></span>
                             <span class="relative inline-flex h-2 w-2 rounded-full bg-emerald-400"></span>
                         </span>
-                        "690+ verified hotels · 6 countries"
+                        {move || match stats.get().and_then(Result::ok) {
+                            Some(s) => s.badge(),
+                            None => "Verified hotels across the Horn of Africa".to_string(),
+                        }}
                     </span>
 
                     <h1 class="mt-5 text-4xl font-extrabold leading-[1.08] tracking-tight sm:text-5xl lg:text-6xl">
@@ -76,14 +93,32 @@ pub fn HomePage() -> impl IntoView {
                                 }).collect_view()}
                             </div>
                             <div class="text-sm">
-                                <Stars rating=4.6 class="h-3.5 w-3.5" />
-                                <p class="mt-0.5 text-slate-300">"48,000+ nights reserved"</p>
+                                <Stars rating=Signal::derive(move || stats.get().and_then(Result::ok).map(|s| s.average_rating).unwrap_or(0.0)) class="h-3.5 w-3.5" />
+                                <p class="mt-0.5 text-slate-300">
+                                    {move || match stats.get().and_then(Result::ok) {
+                                        Some(s) if s.reviews > 0 => format!(
+                                            "{:.1} from {} guest reviews",
+                                            s.average_rating,
+                                            s.reviews,
+                                        ),
+                                        Some(s) => format!("{} rooms listed", s.rooms),
+                                        None => "Rated by verified guests".to_string(),
+                                    }}
+                                </p>
                             </div>
                         </div>
 
                         <div class="text-sm text-slate-300">
                             <p class="text-xs uppercase tracking-wide text-slate-400">"Rooms from"</p>
-                            <p class="text-xl font-extrabold text-white">{format!("ETB {}", thousands(cheapest))}
+                            <p class="text-xl font-extrabold text-white">
+                                // The lowest published nightly rate across every listed room.
+                                {move || match prices.get().and_then(Result::ok) {
+                                    Some(list) if !list.is_empty() => {
+                                        let min = list.iter().map(|(_, p)| *p).fold(f64::MAX, f64::min);
+                                        format!("ETB {}", money_round(min))
+                                    }
+                                    _ => "—".to_string(),
+                                }}
                                 <span class="text-sm font-medium text-slate-300">" / night"</span>
                             </p>
                         </div>
@@ -124,30 +159,60 @@ pub fn HomePage() -> impl IntoView {
                 </A>
             </div>
 
-            <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-                {CITIES.iter().enumerate().map(|(i, c)| {
-                    let delay = format!("animation-delay: {}ms", i * 60);
-                    let href = format!("/hotels?city={}", c.name.replace(' ', "+"));
-                    view! {
-                        <a href=href class="reveal group relative block h-40 overflow-hidden rounded-2xl shadow-sm transition-shadow duration-300 hover:shadow-xl" style=delay>
-                            <img
-                                src=c.image
-                                alt=c.name
-                                loading="lazy"
-                                class="h-full w-full object-cover transition-transform duration-700 group-hover:scale-110"
-                            />
-                            <span class="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/25 to-transparent transition-opacity duration-300 group-hover:from-blue-950/85"></span>
-                            <span class="absolute inset-x-3 bottom-3 text-left text-white transition-transform duration-300 group-hover:-translate-y-1">
-                                <span class="block text-sm font-bold">{c.name}</span>
-                                <span class="block text-[11px] text-slate-300">{c.country}</span>
-                                <span class="mt-1.5 inline-flex items-center gap-1 rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-semibold backdrop-blur">
-                                    {format!("{} hotels", c.hotel_count)}
-                                </span>
-                            </span>
-                        </a>
+            <Suspense fallback=|| view! {
+                <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+                    {(0..6).map(|_| view! { <div class="skeleton h-40 rounded-2xl"></div> }).collect_view()}
+                </div>
+            }>
+                {move || Suspend::new(async move {
+                    let list = cities.await.map(|p| p.items).unwrap_or_default();
+                    if list.is_empty() {
+                        return view! {
+                            <p class="rounded-2xl border border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-500">
+                                "No destinations are listed yet."
+                            </p>
+                        }.into_any();
                     }
-                }).collect_view()}
-            </div>
+                    view! {
+                        <div class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+                            {list.into_iter().enumerate().map(|(i, c)| {
+                                let delay = format!("animation-delay: {}ms", i * 60);
+                                let href = format!("/hotels?city={}", c.city.replace(' ', "+"));
+                                let image = c.featured_image.clone().filter(|u| u.starts_with("http"));
+                                let from = c.min_price.as_deref().and_then(|p| p.parse::<f64>().ok());
+                                view! {
+                                    <a href=href class="reveal group relative block h-40 overflow-hidden rounded-2xl shadow-sm transition-shadow duration-300 hover:shadow-xl" style=delay>
+                                        {match image {
+                                            Some(src) => view! {
+                                                <img
+                                                    src=src
+                                                    alt=c.city.clone()
+                                                    loading="lazy"
+                                                    class="h-full w-full object-cover transition-transform duration-700 group-hover:scale-110"
+                                                />
+                                            }.into_any(),
+                                            None => view! {
+                                                <span class="block h-full w-full bg-gradient-to-br from-blue-700 to-indigo-900"></span>
+                                            }.into_any(),
+                                        }}
+                                        <span class="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/25 to-transparent transition-opacity duration-300 group-hover:from-blue-950/85"></span>
+                                        <span class="absolute inset-x-3 bottom-3 text-left text-white transition-transform duration-300 group-hover:-translate-y-1">
+                                            <span class="block text-sm font-bold">{c.city.clone()}</span>
+                                            <span class="block text-[11px] text-slate-300">{c.country.clone().unwrap_or_default()}</span>
+                                            <span class="mt-1.5 inline-flex items-center gap-1 rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-semibold backdrop-blur">
+                                                {match from {
+                                                    Some(p) => format!("from ETB {}", money_round(p)),
+                                                    None => format!("{} hotels", c.hotel_count),
+                                                }}
+                                            </span>
+                                        </span>
+                                    </a>
+                                }
+                            }).collect_view()}
+                        </div>
+                    }.into_any()
+                })}
+            </Suspense>
         </section>
 
         // ================= FEATURED HOTELS =================
@@ -168,16 +233,36 @@ pub fn HomePage() -> impl IntoView {
                     </A>
                 </div>
 
-                <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                    {featured.into_iter().take(6).enumerate().map(|(i, h)| {
-                        let delay = format!("animation-delay: {}ms", i * 70);
-                        view! {
-                            <div class="reveal" style=delay>
-                                <HotelCardCompact hotel=h />
-                            </div>
+                <Suspense fallback=|| view! {
+                    <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                        {(0..3).map(|_| view! { <div class="skeleton h-64 rounded-2xl"></div> }).collect_view()}
+                    </div>
+                }>
+                    {move || Suspend::new(async move {
+                        let list = featured.await.map(|p| p.items).unwrap_or_default();
+                        let from = prices.await.unwrap_or_default();
+                        if list.is_empty() {
+                            return view! {
+                                <p class="rounded-2xl border border-slate-200 bg-white px-4 py-10 text-center text-sm text-slate-500">
+                                    "No hotels are listed yet."
+                                </p>
+                            }.into_any();
                         }
-                    }).collect_view()}
-                </div>
+                        view! {
+                            <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                                {list.into_iter().take(6).enumerate().map(|(i, h)| {
+                                    let delay = format!("animation-delay: {}ms", i * 70);
+                                    let price = from.iter().find(|(id, _)| *id == h.id).map(|(_, p)| *p);
+                                    view! {
+                                        <div class="reveal" style=delay>
+                                            <FeaturedHotelCard hotel=h from_price=price />
+                                        </div>
+                                    }
+                                }).collect_view()}
+                            </div>
+                        }.into_any()
+                    })}
+                </Suspense>
             </div>
         </section>
 
@@ -232,7 +317,12 @@ pub fn HomePage() -> impl IntoView {
                                 <span class="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 text-sky-300 ring-1 ring-white/15 transition-all duration-300 group-hover:scale-110 group-hover:bg-white/15">
                                     <Icon name=s.icon class="h-5 w-5" />
                                 </span>
-                                <span class="text-3xl font-extrabold tracking-tight sm:text-4xl">{s.value}</span>
+                                <span class="text-3xl font-extrabold tracking-tight sm:text-4xl">
+                                    {move || match stats.get().and_then(Result::ok) {
+                                        Some(live) => s.value_from(&live),
+                                        None => "—".to_string(),
+                                    }}
+                                </span>
                                 <span class="text-sm text-slate-400">{s.label}</span>
                             </div>
                         }
@@ -349,5 +439,84 @@ pub fn HomePage() -> impl IntoView {
                 </div>
             </div>
         </section>
+    }
+}
+
+/// Compact hotel tile for the featured rail.
+///
+/// `GET /organizations/public/` carries no photo or price, so the tile leans on
+/// the hotel's logo (or a monogram) and takes its "from" price from the room
+/// feed that [`hotel_from_prices`] summarises.
+#[component]
+fn FeaturedHotelCard(
+    hotel: crate::api::HotelSummary,
+    from_price: Option<f64>,
+) -> impl IntoView {
+    let href = format!("/hotels/{}", hotel.id);
+    let stars = hotel.stars();
+    let location = hotel.location();
+    let logo = hotel.logo.clone().filter(|u| u.starts_with("http"));
+    let initial = hotel
+        .name
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_else(|| "?".into());
+    let blurb = hotel
+        .description
+        .clone()
+        .filter(|d| !d.trim().is_empty())
+        .map(|d| d.chars().take(110).collect::<String>());
+
+    view! {
+        <A href=href attr:class="card-hover group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white">
+            <div class="relative h-40 w-full overflow-hidden">
+                {match logo {
+                    Some(src) => view! {
+                        <img src=src alt=hotel.name.clone() loading="lazy"
+                            class="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" />
+                    }.into_any(),
+                    None => view! {
+                        <span class="flex h-full w-full items-center justify-center bg-gradient-to-br from-blue-600 to-indigo-700 text-4xl font-extrabold text-white">
+                            {initial}
+                        </span>
+                    }.into_any(),
+                }}
+            </div>
+
+            <div class="flex flex-1 flex-col p-4">
+                <Show when=move || (stars > 0.0)>
+                    <Stars rating=stars class="h-3 w-3" />
+                </Show>
+                <h3 class="mt-1 truncate text-base font-bold text-slate-900">{hotel.name.clone()}</h3>
+                <p class="mt-0.5 flex items-center gap-1 truncate text-xs text-slate-500">
+                    <Icon name="map-pin" class="h-3 w-3 shrink-0" />
+                    {location}
+                </p>
+                {blurb.map(|b| view! {
+                    <p class="mt-2 line-clamp-2 text-xs leading-relaxed text-slate-500">{b}</p>
+                })}
+
+                <div class="mt-auto flex items-end justify-between gap-2 pt-3">
+                    {match from_price {
+                        Some(p) => view! {
+                            <span>
+                                <span class="block text-[11px] text-slate-400">"from"</span>
+                                <span class="block text-lg font-extrabold text-slate-900">
+                                    {format!("ETB {}", money_round(p))}
+                                </span>
+                            </span>
+                        }.into_any(),
+                        None => view! {
+                            <span class="text-xs text-slate-400">"See rooms"</span>
+                        }.into_any(),
+                    }}
+                    <span class="flex items-center gap-1 text-sm font-bold text-blue-700">
+                        "View"
+                        <Icon name="arrow-right" class="h-3.5 w-3.5 transition-transform duration-200 group-hover:translate-x-0.5" />
+                    </span>
+                </div>
+            </div>
+        </A>
     }
 }

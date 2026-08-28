@@ -19,9 +19,14 @@ leptos_axum = { version = "0.8.0", optional = true }
 tokio = { version = "1", features = ["rt-multi-thread"], optional = true }
 tower-http = { version = "0.6", features = ["fs"], optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
+serde = { version = "1", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+serde_json = "1"
+js-sys = { version = "0.3", optional = true }
 wasm-bindgen = { version = "0.2.106", optional = true }
 web-sys = { version = "0.3", features = [
     "ScrollBehavior", "ScrollIntoViewOptions", "ScrollLogicalPosition", "ScrollToOptions",
+    "Window", "Storage", "Navigator", "Clipboard",
 ] }
 
 [features]
@@ -29,12 +34,14 @@ hydrate = [
     "leptos/hydrate",
     "dep:console_error_panic_hook",
     "dep:wasm-bindgen",
+    "dep:js-sys",
 ]
 ssr = [
     "dep:axum",
     "dep:tokio",
     "dep:tower-http",
     "dep:leptos_axum",
+    "dep:reqwest",
     "leptos/ssr",
     "leptos_meta/ssr",
     "leptos_router/ssr",

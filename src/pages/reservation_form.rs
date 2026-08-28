@@ -1,20 +1,28 @@
-use crate::components::{pluralize, thousands, use_toast, Icon};
-use crate::data::{find_hotel, find_room, Hotel, RoomType};
+//! The booking wizard, backed by `/reservations/public/`.
+//!
+//! Three steps: who is staying, when, then a review. Two live endpoints do the
+//! real work:
+//!
+//! * `POST /reservations/public/quote/` prices the stay as the dates and party
+//!   size change, so the guest sees the actual total — including the property's
+//!   tax rate — before committing. It also validates the range: an impossible
+//!   or already-booked date pair fails here rather than at submit.
+//! * `POST /reservations/public/book/` creates the reservation. No account is
+//!   needed; the email or phone entered here is what retrieves it later.
+//!
+//! Nothing is charged — the guest pays the hotel on arrival.
+
+use crate::api::{
+    create_booking, get_hotel_detail, list_hotel_rooms, money, money_round, pretty_date,
+    BookingRequest, HotelDetail, Quote, RoomSummary,
+};
+use crate::components::{pluralize, Icon};
 use leptos::prelude::*;
 use leptos_meta::Title;
 use leptos_router::components::A;
 use leptos_router::hooks::{use_navigate, use_params_map};
-use std::time::Duration;
 
-// ---------------------------------------------------------------------------
-// Date helpers
-//
-// Only enough calendar maths to count nights and print a friendly date; the
-// portal never needs timezone-aware handling because check-in dates are local
-// to the hotel.
-// ---------------------------------------------------------------------------
-
-/// Days since 1970-01-01 for a proleptic Gregorian date (Howard Hinnant's algorithm).
+/// Days since 1970-01-01 (Howard Hinnant's `days_from_civil`).
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = if y >= 0 { y } else { y - 399 } / 400;
@@ -26,129 +34,194 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 }
 
 fn parse_iso(value: &str) -> Option<(i64, i64, i64)> {
-    let mut parts = value.split('-');
-    let y = parts.next()?.parse().ok()?;
-    let m = parts.next()?.parse().ok()?;
-    let d = parts.next()?.parse().ok()?;
-    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
-        return None;
-    }
-    Some((y, m, d))
+    let mut it = value.split('-');
+    Some((
+        it.next()?.parse().ok()?,
+        it.next()?.parse().ok()?,
+        it.next()?.parse().ok()?,
+    ))
 }
 
-/// Nights between two ISO dates, or `None` if either is unparseable or the
-/// range is not at least one night.
+/// Whole nights between two ISO dates. `None` when the range is not at least
+/// one night, which is exactly what the API rejects.
 fn nights_between(check_in: &str, check_out: &str) -> Option<u32> {
-    let (y1, m1, d1) = parse_iso(check_in)?;
-    let (y2, m2, d2) = parse_iso(check_out)?;
-    let diff = days_from_civil(y2, m2, d2) - days_from_civil(y1, m1, d1);
-    if diff >= 1 {
-        Some(diff as u32)
-    } else {
-        None
+    let (a, b) = (parse_iso(check_in)?, parse_iso(check_out)?);
+    let diff = days_from_civil(b.0, b.1, b.2) - days_from_civil(a.0, a.1, a.2);
+    (diff >= 1).then_some(diff as u32)
+}
+
+/// Today, from the browser clock on the client and a fixed fallback on the
+/// server — the value is only used to seed the date inputs.
+fn today_iso() -> String {
+    #[cfg(feature = "hydrate")]
+    {
+        let now = js_sys::Date::new_0();
+        return format!(
+            "{:04}-{:02}-{:02}",
+            now.get_full_year(),
+            now.get_month() + 1,
+            now.get_date()
+        );
+    }
+    #[cfg(not(feature = "hydrate"))]
+    {
+        String::new()
     }
 }
 
-const MONTHS: [&str; 12] = [
-    "January", "February", "March", "April", "May", "June", "July", "August", "September",
-    "October", "November", "December",
-];
-
-/// `"2026-09-04"` -> `"4 September 2026"`.
-pub fn pretty_date(value: &str) -> String {
-    match parse_iso(value) {
-        Some((y, m, d)) => format!("{} {} {}", d, MONTHS[(m - 1) as usize], y),
-        None => value.to_string(),
-    }
+/// Moves an ISO date by whole days (Howard Hinnant's `civil_from_days`).
+fn plus_days(iso: &str, days: i64) -> String {
+    let Some((y, m, d)) = parse_iso(iso) else {
+        return String::new();
+    };
+    let z = days_from_civil(y, m, d) + days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { year + 1 } else { year };
+    format!("{year:04}-{month:02}-{day:02}")
 }
-
-/// Deterministic-looking booking reference derived from the guest's details, so
-/// the same submission always produces the same code within a session.
-fn booking_reference(name: &str, contact: &str) -> String {
-    let seed: u32 = name
-        .bytes()
-        .chain(contact.bytes())
-        .fold(7u32, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u32));
-    format!("HA-{:06}", 100_000 + seed % 900_000)
-}
-
-const STEPS: [(&str, &str); 3] = [
-    ("Your details", "user-check"),
-    ("Your stay", "calendar"),
-    ("Review & confirm", "check-circle"),
-];
 
 #[component]
 pub fn ReservationFormPage() -> impl IntoView {
     let params = use_params_map();
+    let hotel_id = move || params.get().get("id").unwrap_or_default();
+    let room_id = move || params.get().get("room_id").unwrap_or_default();
 
-    let resolved = move || {
-        let hid = params.get().get("id").unwrap_or_default();
-        let rid = params.get().get("room_id").unwrap_or_default();
-        find_hotel(&hid).and_then(|h| find_room(h, &rid).map(|r| (h, r)))
-    };
+    let hotel = Resource::new(hotel_id, |id| async move { get_hotel_detail(id).await });
+    let rooms = Resource::new(hotel_id, |id| async move {
+        list_hotel_rooms(id, None, None).await
+    });
 
     view! {
         <Title text="Complete your reservation — Horn of Africa Hotel Portal" />
-        {move || match resolved() {
-            None => view! {
-                <div class="mx-auto flex max-w-lg flex-col items-center gap-3 px-4 py-24 text-center">
-                    <span class="flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 text-slate-400">
-                        <Icon name="bed" class="h-7 w-7" />
-                    </span>
-                    <h1 class="text-xl font-bold text-slate-900">"Room not found"</h1>
-                    <p class="text-sm text-slate-500">"That room type is no longer listed for this hotel."</p>
-                    <A href="/hotels" attr:class="mt-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-blue-800">
-                        "Browse hotels"
-                    </A>
-                </div>
-            }.into_any(),
-            Some((h, r)) => view! { <ReservationWizard hotel=h room=r /> }.into_any(),
-        }}
+        <Suspense fallback=|| view! {
+            <div class="mx-auto max-w-6xl px-4 py-10">
+                <div class="skeleton h-96 rounded-2xl"></div>
+            </div>
+        }>
+            {move || Suspend::new(async move {
+                let wanted = room_id();
+                let hotel = hotel.await;
+                let room = rooms
+                    .await
+                    .ok()
+                    .and_then(|list| list.into_iter().find(|r| r.id.to_string() == wanted));
+
+                match (hotel, room) {
+                    (Ok(h), Some(r)) => view! { <ReservationWizard hotel=h room=r /> }.into_any(),
+                    _ => view! {
+                        <div class="mx-auto flex max-w-lg flex-col items-center gap-3 px-4 py-24 text-center">
+                            <span class="flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 text-slate-400">
+                                <Icon name="bed" class="h-7 w-7" />
+                            </span>
+                            <h1 class="text-xl font-bold text-slate-900">"Room not found"</h1>
+                            <p class="text-sm text-slate-500">"That room is no longer listed for this hotel."</p>
+                            <A href="/hotels" attr:class="mt-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-blue-800">
+                                "Browse hotels"
+                            </A>
+                        </div>
+                    }.into_any(),
+                }
+            })}
+        </Suspense>
     }
 }
 
 #[component]
-fn ReservationWizard(hotel: &'static Hotel, room: &'static RoomType) -> impl IntoView {
-    let h = hotel;
-    let r = room;
+fn ReservationWizard(hotel: HotelDetail, room: RoomSummary) -> impl IntoView {
     let navigate = use_navigate();
-    let toast = use_toast();
+    let nav = StoredValue::new(navigate);
+
+    let hotel_id = hotel.id;
+    let room_id = room.id;
+    let hotel_name = hotel.name.clone();
+    let room_name = room.name.clone();
+    let room_number = room.room_number.clone();
+    let capacity = room.guest_capacity.max(1);
+    let currency = hotel.currency_code().to_string();
+    let cur = StoredValue::new(currency.clone());
+    let room_label = StoredValue::new(room.name.clone());
+    let nightly = room.price();
+    let room_image = room.primary_image.clone().filter(|u| u.starts_with("http"));
+    let bed_summary = room.bed_summary();
+    let breakfast = room.breakfast_included;
+    let policies = hotel.policies.clone().unwrap_or_default();
+    let checkin_time = policies.checkin_display();
+    let checkout_time = policies.checkout_display();
+    let extra_beds_allowed = policies.extrabed_available.unwrap_or(false);
+    let pets_allowed = policies.pet_allowed.unwrap_or(false);
+
+    // Seed the dates from tomorrow so the API's "not in the past" rule passes.
+    let start = today_iso();
+    let default_in = if start.is_empty() { String::new() } else { plus_days(&start, 1) };
+    let default_out = if start.is_empty() { String::new() } else { plus_days(&start, 3) };
 
     let step = RwSignal::new(0usize);
-    let full_name = RwSignal::new(String::new());
-    let contact = RwSignal::new(String::new());
+    let first_name = RwSignal::new(String::new());
+    let last_name = RwSignal::new(String::new());
     let email = RwSignal::new(String::new());
+    let phone = RwSignal::new(String::new());
     let requests = RwSignal::new(String::new());
-    let check_in = RwSignal::new("2026-09-04".to_string());
-    let check_out = RwSignal::new("2026-09-06".to_string());
-    let guests = RwSignal::new(2u32.min(r.guests).max(1));
-    let rooms = RwSignal::new(1u32);
-    let arrival = RwSignal::new("Afternoon (12:00 – 18:00)".to_string());
+    let check_in = RwSignal::new(default_in);
+    let check_out = RwSignal::new(default_out);
+    let guests = RwSignal::new(2u32.min(capacity).max(1));
+    let extra_bed = RwSignal::new(0u32);
+    let pets = RwSignal::new(false);
+    let babies = RwSignal::new(false);
     let errors = RwSignal::new(Vec::<String>::new());
     let submitting = RwSignal::new(false);
 
-    // ---- Derived pricing -------------------------------------------------
     let nights = Memo::new(move |_| nights_between(&check_in.get(), &check_out.get()).unwrap_or(0));
-    let subtotal = Memo::new(move |_| r.price_per_night * nights.get() * rooms.get());
-    // Regional tourism levy, quoted so the guest sees the real total up front.
-    let taxes = Memo::new(move |_| subtotal.get() * 15 / 100);
-    let total = Memo::new(move |_| subtotal.get() + taxes.get());
+
+    // The API prices the stay. Re-quoted whenever anything that affects the
+    // total changes, and only once the range is valid.
+    let quote = Resource::new(
+        move || {
+            (
+                room_id,
+                check_in.get(),
+                check_out.get(),
+                guests.get(),
+                extra_bed.get(),
+                pets.get(),
+            )
+        },
+        |(room_id, ci, co, g, eb, pet)| async move {
+            if nights_between(&ci, &co).is_none() {
+                return Err(ServerFnError::new(
+                    "Check-out must be at least one night after check-in.",
+                ));
+            }
+            crate::api::get_quote(room_id, ci, co, g, eb, pet).await
+        },
+    );
 
     let validate_step = move |s: usize| -> Vec<String> {
         let mut out = Vec::new();
         if s == 0 {
-            if full_name.get().trim().len() < 3 {
-                out.push("Enter the full name of the lead guest.".to_string());
+            if first_name.get().trim().len() < 2 {
+                out.push("Enter the lead guest's first name.".to_string());
             }
-            let c = contact.get();
-            let looks_like_phone = c.chars().filter(|ch| ch.is_ascii_digit()).count() >= 7;
-            let looks_like_email = c.contains('@') && c.contains('.');
-            if !looks_like_phone && !looks_like_email {
-                out.push("Enter a phone number or an email address we can reach you on.".to_string());
+            if last_name.get().trim().len() < 2 {
+                out.push("Enter the lead guest's last name.".to_string());
             }
             let e = email.get();
-            if !e.trim().is_empty() && (!e.contains('@') || !e.contains('.')) {
+            let p = phone.get();
+            let has_email = e.contains('@') && e.contains('.');
+            let has_phone = p.chars().filter(|c| c.is_ascii_digit()).count() >= 7;
+            if !has_email && !has_phone {
+                out.push(
+                    "Enter an email address or a phone number — it is how you retrieve the booking."
+                        .to_string(),
+                );
+            }
+            if !e.trim().is_empty() && !has_email {
                 out.push("That email address does not look right.".to_string());
             }
         }
@@ -156,36 +229,41 @@ fn ReservationWizard(hotel: &'static Hotel, room: &'static RoomType) -> impl Int
             if nights_between(&check_in.get(), &check_out.get()).is_none() {
                 out.push("Check-out must be at least one night after check-in.".to_string());
             }
-            if guests.get() > r.guests * rooms.get() {
+            if guests.get() > capacity {
                 out.push(format!(
-                    "{} sleeps up to {}. Add another room or reduce the party size.",
-                    r.name,
-                    pluralize(r.guests * rooms.get(), "guest")
+                    "{} sleeps up to {}.",
+                    room_label.get_value(),
+                    pluralize(capacity, "guest"),
                 ));
+            }
+            // Surface whatever the quote endpoint objected to, so the guest is
+            // not told the dates are fine and then refused at submit.
+            if let Some(Err(e)) = quote.get() {
+                out.push(e.to_string());
             }
         }
         out
     };
 
-    // The submit buttons sit at the bottom of a long form, so a failed validation
-    // would otherwise only show a toast while the error list stayed off-screen.
-    // Deferred by a tick so `<Show>` has mounted the banner before we look it up.
+    // The submit button sits at the bottom of a long form, so a failed
+    // validation would otherwise only show a toast while the error list stayed
+    // off-screen.
     let reveal_errors = move || {
-        // Deferred a tick so `<Show>` has mounted the banner and the page has
-        // reflowed around it before the browser works out where to scroll.
-        // Instant, because the site-wide `scroll-behavior: smooth` animates
-        // towards a position captured before that reflow and lands short. The
-        // banner's own `scroll-mt-20` keeps it clear of the sticky header.
-        set_timeout(
-            || {
-                let Some(el) = document().get_element_by_id("form-errors") else { return };
-                let opts = web_sys::ScrollIntoViewOptions::new();
-                opts.set_block(web_sys::ScrollLogicalPosition::Start);
-                opts.set_behavior(web_sys::ScrollBehavior::Instant);
-                el.scroll_into_view_with_scroll_into_view_options(&opts);
-            },
-            Duration::ZERO,
-        );
+        #[cfg(feature = "hydrate")]
+        {
+            leptos::prelude::set_timeout(
+                || {
+                    let Some(el) = document().get_element_by_id("form-errors") else {
+                        return;
+                    };
+                    let opts = web_sys::ScrollIntoViewOptions::new();
+                    opts.set_block(web_sys::ScrollLogicalPosition::Start);
+                    opts.set_behavior(web_sys::ScrollBehavior::Instant);
+                    el.scroll_into_view_with_scroll_into_view_options(&opts);
+                },
+                std::time::Duration::ZERO,
+            );
+        }
     };
 
     let go_next = move |_| {
@@ -194,7 +272,6 @@ fn ReservationWizard(hotel: &'static Hotel, room: &'static RoomType) -> impl Int
         if found.is_empty() {
             step.update(|s| *s = (*s + 1).min(2));
         } else {
-            toast.error("Check the form", found[0].clone());
             reveal_errors();
         }
     };
@@ -204,346 +281,276 @@ fn ReservationWizard(hotel: &'static Hotel, room: &'static RoomType) -> impl Int
         step.update(|s| *s = s.saturating_sub(1));
     };
 
-    let submit = {
-        let navigate = navigate.clone();
-        move |_: leptos::ev::MouseEvent| {
-            let mut found = validate_step(0);
-            found.extend(validate_step(1));
-            errors.set(found.clone());
-            if !found.is_empty() {
-                toast.error("Something's missing", found[0].clone());
-                step.set(if validate_step(0).is_empty() { 1 } else { 0 });
-                reveal_errors();
-                return;
-            }
-            submitting.set(true);
-            let reference = booking_reference(&full_name.get(), &contact.get());
-            toast.success("Reservation confirmed", format!("Your booking reference is {reference}."));
-            navigate(&format!("/confirmation/{reference}"), Default::default());
+    let submit = move |_: leptos::ev::MouseEvent| {
+        if submitting.get() {
+            return;
         }
+        let mut found = validate_step(0);
+        found.extend(validate_step(1));
+        errors.set(found.clone());
+        if !found.is_empty() {
+            step.set(if validate_step(0).is_empty() { 1 } else { 0 });
+            reveal_errors();
+            return;
+        }
+        submitting.set(true);
+
+        let req = BookingRequest {
+            organization_id: hotel_id,
+            room_id,
+            check_in_date: check_in.get(),
+            check_out_date: check_out.get(),
+            guest_count: guests.get(),
+            extra_bed: extra_bed.get(),
+            pet_presence: pets.get(),
+            baby_presence: babies.get(),
+            guest_first_name: first_name.get().trim().to_string(),
+            guest_last_name: last_name.get().trim().to_string(),
+            guest_email: email.get().trim().to_string(),
+            guest_phone: phone.get().trim().to_string(),
+            guest_note: requests.get(),
+        };
+
+        leptos::task::spawn_local(async move {
+            match create_booking(req).await {
+                Ok(res) => {
+                    // Cache it so the confirmation page — and "My reservations"
+                    // — can show the booking without a retrieval code.
+                    crate::store::remember(&res);
+                    let reference = res.reference();
+                    nav.with_value(|n| {
+                        n(&format!("/confirmation/{reference}"), Default::default())
+                    });
+                }
+                Err(e) => {
+                    submitting.set(false);
+                    errors.set(vec![e.to_string()]);
+                    reveal_errors();
+                }
+            }
+        });
     };
-    // `Show`'s fallback may render more than once, so the handler has to be
-    // `Fn` rather than `FnOnce` — storing it makes it cheaply copyable.
     let submit = StoredValue::new(submit);
 
     let field = "w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm text-slate-800 transition-all duration-200 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100";
 
+    let back_href = format!("/hotels/{hotel_id}");
+    let back_label = hotel_name.clone();
+
     view! {
         <div class="mx-auto max-w-6xl px-4 py-6">
             <A
-                href=format!("/hotels/{}", h.id)
+                href=back_href
                 attr:class="group mb-4 inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500 transition-colors hover:text-blue-700"
             >
                 <Icon name="chevron-left" class="h-4 w-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
-                "Back to " {h.name}
+                "Back to " {back_label}
             </A>
 
-            // ---- Step indicator ---------------------------------------------
-            <div class="mb-7 animate-fade-up">
-                <div class="flex items-center">
-                    {STEPS.iter().enumerate().map(|(i, (label, icon))| {
-                        let is_last = i == STEPS.len() - 1;
-                        view! {
-                            <>
-                                <button
-                                    on:click=move |_| { if i < step.get() { step.set(i); } }
-                                    class="flex shrink-0 items-center gap-2.5 text-left"
-                                >
-                                    <span class=move || format!(
-                                        "flex h-10 w-10 items-center justify-center rounded-full border-2 transition-all duration-300 {}",
-                                        if step.get() > i {
-                                            "border-emerald-500 bg-emerald-500 text-white"
-                                        } else if step.get() == i {
-                                            "border-blue-700 bg-blue-700 text-white shadow-lg shadow-blue-700/30 scale-110"
-                                        } else {
-                                            "border-slate-300 bg-white text-slate-400"
-                                        }
-                                    )>
-                                        {move || if step.get() > i {
-                                            view! { <Icon name="check" class="h-4 w-4" /> }.into_any()
-                                        } else {
-                                            view! { <Icon name=*icon class="h-4 w-4" /> }.into_any()
-                                        }}
-                                    </span>
-                                    <span class="hidden sm:block">
-                                        <span class="block text-[11px] uppercase tracking-wide text-slate-400">{format!("Step {}", i + 1)}</span>
-                                        <span class=move || format!(
-                                            "block text-sm font-bold transition-colors {}",
-                                            if step.get() >= i { "text-slate-900" } else { "text-slate-400" }
-                                        )>{*label}</span>
-                                    </span>
-                                </button>
-                                <Show when=move || !is_last>
-                                    <span class="mx-3 h-0.5 flex-1 overflow-hidden rounded-full bg-slate-200">
-                                        <span class=move || format!(
-                                            "block h-full rounded-full bg-emerald-500 transition-all duration-500 {}",
-                                            if step.get() > i { "w-full" } else { "w-0" }
-                                        )></span>
-                                    </span>
-                                </Show>
-                            </>
-                        }
-                    }).collect_view()}
-                </div>
+            // ---- Step indicator ------------------------------------------
+            <div class="mb-6 grid grid-cols-3 gap-2">
+                {["Your details", "Your stay", "Review"].into_iter().enumerate().map(|(i, label)| view! {
+                    <button
+                        on:click=move |_| { if i < step.get() { step.set(i); } }
+                        class="text-left"
+                    >
+                        <span class="flex items-center gap-2">
+                            <span class=move || format!(
+                                "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-bold transition-colors {}",
+                                if step.get() > i {
+                                    "bg-emerald-600 text-white"
+                                } else if step.get() == i {
+                                    "bg-blue-700 text-white"
+                                } else {
+                                    "bg-slate-200 text-slate-500"
+                                }
+                            )>
+                                {move || if step.get() > i {
+                                    view! { <Icon name="check" class="h-3.5 w-3.5" /> }.into_any()
+                                } else {
+                                    view! { {i + 1} }.into_any()
+                                }}
+                            </span>
+                            <span class="min-w-0">
+                                <span class="block text-[11px] uppercase tracking-wide text-slate-400">{format!("Step {}", i + 1)}</span>
+                                <span class=move || format!(
+                                    "block truncate text-sm font-bold transition-colors {}",
+                                    if step.get() >= i { "text-slate-900" } else { "text-slate-400" }
+                                )>
+                                    {label}
+                                </span>
+                            </span>
+                        </span>
+                        <span class="mt-2 block h-1 overflow-hidden rounded-full bg-slate-200">
+                            <span class=move || format!(
+                                "block h-full rounded-full bg-blue-700 transition-all duration-500 {}",
+                                if step.get() > i { "w-full" } else { "w-0" }
+                            )></span>
+                        </span>
+                    </button>
+                }).collect_view()}
             </div>
 
-            <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
+            <div class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
                 // ================= FORM =================
                 <div class="min-w-0">
                     <Show when=move || !errors.get().is_empty()>
-                        <div id="form-errors" class="mb-4 scroll-mt-20 animate-fade-up rounded-xl border border-red-200 bg-red-50 p-4">
+                        <div id="form-errors" class="mb-5 scroll-mt-20 rounded-xl border border-red-200 bg-red-50 p-4">
                             <p class="flex items-center gap-2 text-sm font-bold text-red-800">
-                                <Icon name="alert" class="h-4 w-4" />
+                                <Icon name="alert" class="h-4 w-4 shrink-0" />
                                 "Please fix the following"
                             </p>
-                            <ul class="mt-2 flex flex-col gap-1 pl-6 text-sm text-red-700">
-                                {move || errors.get().into_iter().map(|e| view! {
-                                    <li class="list-disc">{e}</li>
-                                }).collect_view()}
+                            <ul class="mt-2 flex list-inside list-disc flex-col gap-1 text-sm text-red-700">
+                                {move || errors.get().into_iter().map(|e| view! { <li>{e}</li> }).collect_view()}
                             </ul>
                         </div>
                     </Show>
 
-                    // ---- Step 1 ---------------------------------------------
+                    // ---- Step 1: guest details ---------------------------
                     <Show when=move || (step.get() == 0)>
-                        <div class="animate-fade-up rounded-2xl border border-slate-200 bg-white p-6">
+                        <section class="animate-fade-up rounded-2xl border border-slate-200 bg-white p-5">
                             <h2 class="text-lg font-bold text-slate-900">"Who is the reservation for?"</h2>
                             <p class="mt-1 text-sm text-slate-500">
-                                "The lead guest must present matching identification at check-in."
+                                "No account needed. We use these details to hold the room and to let you retrieve the booking later."
                             </p>
 
-                            <div class="mt-5 flex flex-col gap-4">
-                                <div>
-                                    <label class="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                                        "Full name" <span class="text-red-500">"*"</span>
-                                    </label>
-                                    <div class="relative">
-                                        <Icon name="user-check" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                                        <input
-                                            type="text"
-                                            placeholder="Ahmed Hassan"
-                                            class=format!("{field} pl-9")
-                                            prop:value=full_name
-                                            on:input:target=move |ev| full_name.set(ev.target().value())
-                                        />
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label class="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                                        "Phone number or email" <span class="text-red-500">"*"</span>
-                                    </label>
-                                    <div class="relative">
-                                        <Icon name="phone" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                                        <input
-                                            type="text"
-                                            placeholder="0912 345 678"
-                                            class=format!("{field} pl-9")
-                                            prop:value=contact
-                                            on:input:target=move |ev| contact.set(ev.target().value())
-                                        />
-                                    </div>
-                                    <p class="mt-1.5 flex items-center gap-1.5 text-xs text-slate-400">
-                                        <Icon name="info" class="h-3.5 w-3.5" />
-                                        "Used to retrieve your booking later and by the hotel to reach you."
-                                    </p>
-                                </div>
-
-                                <div>
-                                    <label class="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                                        "Email " <span class="font-medium normal-case text-slate-400">"(optional)"</span>
-                                    </label>
-                                    <div class="relative">
-                                        <Icon name="mail" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                                        <input
-                                            type="email"
-                                            placeholder="ahmed@example.com"
-                                            class=format!("{field} pl-9")
-                                            prop:value=email
-                                            on:input:target=move |ev| email.set(ev.target().value())
-                                        />
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label class="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">
-                                        "Special requests " <span class="font-medium normal-case text-slate-400">"(optional)"</span>
-                                    </label>
-                                    <textarea
-                                        rows="3"
-                                        placeholder="High floor, extra pillows, cot for a toddler…"
-                                        class=format!("{field} resize-none")
-                                        prop:value=requests
-                                        on:input:target=move |ev| requests.set(ev.target().value())
-                                    ></textarea>
-                                    <p class="mt-1.5 text-xs text-slate-400">
-                                        "Requests are passed to the hotel but cannot be guaranteed."
-                                    </p>
-                                </div>
+                            <div class="mt-4 grid gap-4 sm:grid-cols-2">
+                                <Field label="First name" value=first_name class=field placeholder="Marta" />
+                                <Field label="Last name" value=last_name class=field placeholder="Bekele" />
                             </div>
-                        </div>
-                    </Show>
 
-                    // ---- Step 2 ---------------------------------------------
-                    <Show when=move || (step.get() == 1)>
-                        <div class="animate-fade-up rounded-2xl border border-slate-200 bg-white p-6">
-                            <h2 class="text-lg font-bold text-slate-900">"When are you staying?"</h2>
-                            <p class="mt-1 text-sm text-slate-500">
-                                {format!("Check-in from {} · Check-out by {}", h.check_in_time, h.check_out_time)}
+                            <div class="mt-4 grid gap-4 sm:grid-cols-2">
+                                <Field label="Email address" value=email class=field kind="email" placeholder="you@example.com" />
+                                <Field label="Phone number" value=phone class=field kind="tel" placeholder="+251 …" />
+                            </div>
+                            <p class="mt-1.5 text-xs text-slate-400">
+                                "Give at least one. Your booking reference and the retrieval code are sent there."
                             </p>
 
-                            <div class="mt-5 grid gap-4 sm:grid-cols-2">
-                                <div>
-                                    <label class="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">"Check-in"</label>
-                                    <input
-                                        type="date"
-                                        class=field
-                                        prop:value=check_in
-                                        on:input:target=move |ev| check_in.set(ev.target().value())
-                                    />
-                                </div>
-                                <div>
-                                    <label class="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">"Check-out"</label>
-                                    <input
-                                        type="date"
-                                        class=field
-                                        prop:value=check_out
-                                        on:input:target=move |ev| check_out.set(ev.target().value())
-                                    />
-                                </div>
-                            </div>
-
-                            <div class="mt-3 flex items-center gap-2 rounded-xl bg-blue-50 px-4 py-3 text-sm text-blue-800">
-                                <Icon name="moon" class="h-4 w-4 shrink-0" />
-                                {move || match nights.get() {
-                                    0 => "Choose a check-out date at least one night later.".to_string(),
-                                    1 => "1 night".to_string(),
-                                    n => format!("{n} nights"),
-                                }}
-                            </div>
-
-                            <div class="mt-5 grid gap-4 sm:grid-cols-2">
-                                <div>
-                                    <label class="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">"Guests"</label>
-                                    <NumberField value=guests min=1 max=16 icon="users" />
-                                </div>
-                                <div>
-                                    <label class="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">"Rooms"</label>
-                                    <NumberField value=rooms min=1 max=8 icon="bed" />
-                                </div>
-                            </div>
-
-                            <div class="mt-5">
-                                <label class="mb-1.5 block text-xs font-bold uppercase tracking-wide text-slate-500">"Estimated arrival time"</label>
-                                <select
+                            <div class="mt-4">
+                                <label class="mb-1.5 block text-sm font-semibold text-slate-700">"Special requests"</label>
+                                <textarea
+                                    rows="3"
+                                    placeholder="Late arrival, high floor, airport pickup…"
                                     class=field
-                                    on:change:target=move |ev| arrival.set(ev.target().value())
-                                >
-                                    {[
-                                        "Morning (before 12:00)",
-                                        "Afternoon (12:00 – 18:00)",
-                                        "Evening (18:00 – 22:00)",
-                                        "Late night (after 22:00)",
-                                    ].into_iter().map(|opt| view! {
-                                        <option selected=move || (arrival.get() == opt)>{opt}</option>
-                                    }).collect_view()}
-                                </select>
+                                    prop:value=requests
+                                    on:input:target=move |ev| requests.set(ev.target().value())
+                                ></textarea>
                                 <p class="mt-1.5 text-xs text-slate-400">
-                                    "The front desk is staffed 24 hours — a late arrival will not lose your room."
+                                    "Requests are passed to the hotel but are not guaranteed."
                                 </p>
                             </div>
-                        </div>
+                        </section>
                     </Show>
 
-                    // ---- Step 3 ---------------------------------------------
+                    // ---- Step 2: the stay --------------------------------
+                    <Show when=move || (step.get() == 1)>
+                        <section class="animate-fade-up rounded-2xl border border-slate-200 bg-white p-5">
+                            <h2 class="text-lg font-bold text-slate-900">"When are you staying?"</h2>
+                            <p class="mt-1 text-sm text-slate-500">
+                                {format!("Check-in from {checkin_time}, check-out by {checkout_time}.")}
+                            </p>
+
+                            <div class="mt-4 grid gap-4 sm:grid-cols-2">
+                                <div>
+                                    <label class="mb-1.5 block text-sm font-semibold text-slate-700">"Check-in"</label>
+                                    <input type="date" class=field prop:value=check_in
+                                        on:input:target=move |ev| check_in.set(ev.target().value()) />
+                                </div>
+                                <div>
+                                    <label class="mb-1.5 block text-sm font-semibold text-slate-700">"Check-out"</label>
+                                    <input type="date" class=field prop:value=check_out
+                                        on:input:target=move |ev| check_out.set(ev.target().value()) />
+                                </div>
+                            </div>
+
+                            <p class="mt-2 text-sm font-semibold text-slate-600">
+                                {move || match nights.get() {
+                                    0 => "Pick a valid date range".to_string(),
+                                    n => pluralize(n, "night"),
+                                }}
+                            </p>
+
+                            <div class="mt-5 grid gap-4 sm:grid-cols-2">
+                                <div>
+                                    <label class="mb-1.5 block text-sm font-semibold text-slate-700">"Guests"</label>
+                                    <NumberField value=guests min=1 max=capacity icon="users" />
+                                    <p class="mt-1.5 text-xs text-slate-400">
+                                        {format!("This room sleeps up to {}.", pluralize(capacity, "guest"))}
+                                    </p>
+                                </div>
+                                <Show when=move || extra_beds_allowed>
+                                    <div>
+                                        <label class="mb-1.5 block text-sm font-semibold text-slate-700">"Extra beds"</label>
+                                        <NumberField value=extra_bed min=0 max=3 icon="bed" />
+                                        <p class="mt-1.5 text-xs text-slate-400">"Charged per night by the hotel."</p>
+                                    </div>
+                                </Show>
+                            </div>
+
+                            <div class="mt-5 flex flex-col gap-2">
+                                <Show when=move || pets_allowed>
+                                    <Check label="I am bringing a pet" hint="The hotel may add a pet charge" value=pets />
+                                </Show>
+                                <Check label="I am travelling with an infant" hint="A cot may be arranged with the hotel" value=babies />
+                            </div>
+                        </section>
+                    </Show>
+
+                    // ---- Step 3: review ----------------------------------
                     <Show when=move || (step.get() == 2)>
-                        <div class="flex animate-fade-up flex-col gap-4">
-                            <div class="rounded-2xl border border-slate-200 bg-white p-6">
-                                <h2 class="text-lg font-bold text-slate-900">"Check everything over"</h2>
-                                <p class="mt-1 text-sm text-slate-500">"Nothing is charged now. You pay the hotel at check-in."</p>
+                        <section class="animate-fade-up rounded-2xl border border-slate-200 bg-white p-5">
+                            <h2 class="text-lg font-bold text-slate-900">"Check everything over"</h2>
+                            <p class="mt-1 text-sm text-slate-500">
+                                "Nothing is charged now — you pay the hotel when you arrive."
+                            </p>
 
-                                <dl class="mt-5 divide-y divide-slate-100">
-                                    <ReviewRow icon="user-check" label="Lead guest" value=Signal::derive(move || full_name.get()) />
-                                    <ReviewRow icon="phone" label="Contact" value=Signal::derive(move || contact.get()) />
-                                    <ReviewRow
-                                        icon="mail"
-                                        label="Email"
-                                        value=Signal::derive(move || {
-                                            let e = email.get();
-                                            if e.trim().is_empty() { "Not provided".to_string() } else { e }
-                                        })
-                                    />
-                                    <ReviewRow icon="calendar" label="Check-in" value=Signal::derive(move || pretty_date(&check_in.get())) />
-                                    <ReviewRow icon="calendar" label="Check-out" value=Signal::derive(move || pretty_date(&check_out.get())) />
-                                    <ReviewRow
-                                        icon="users"
-                                        label="Party"
-                                        value=Signal::derive(move || format!(
-                                            "{} {} · {} {}",
-                                            guests.get(),
-                                            if guests.get() == 1 { "guest" } else { "guests" },
-                                            rooms.get(),
-                                            if rooms.get() == 1 { "room" } else { "rooms" },
-                                        ))
-                                    />
-                                    <ReviewRow icon="clock" label="Arrival" value=Signal::derive(move || arrival.get()) />
-                                    <ReviewRow
-                                        icon="message"
-                                        label="Requests"
-                                        value=Signal::derive(move || {
-                                            let q = requests.get();
-                                            if q.trim().is_empty() { "None".to_string() } else { q }
-                                        })
-                                    />
-                                </dl>
+                            <dl class="mt-4 flex flex-col divide-y divide-slate-100">
+                                <ReviewRow label="Lead guest" value=Signal::derive(move || {
+                                    format!("{} {}", first_name.get().trim(), last_name.get().trim())
+                                }) on_edit=move || step.set(0) />
+                                <ReviewRow label="Email" value=Signal::derive(move || {
+                                    let e = email.get();
+                                    if e.trim().is_empty() { "—".into() } else { e }
+                                }) on_edit=move || step.set(0) />
+                                <ReviewRow label="Phone" value=Signal::derive(move || {
+                                    let p = phone.get();
+                                    if p.trim().is_empty() { "—".into() } else { p }
+                                }) on_edit=move || step.set(0) />
+                                <ReviewRow label="Stay" value=Signal::derive(move || format!(
+                                    "{} → {}",
+                                    pretty_date(Some(&check_in.get())),
+                                    pretty_date(Some(&check_out.get())),
+                                )) on_edit=move || step.set(1) />
+                                <ReviewRow label="Guests" value=Signal::derive(move || pluralize(guests.get(), "guest"))
+                                    on_edit=move || step.set(1) />
+                                <ReviewRow label="Special requests" value=Signal::derive(move || {
+                                    let r = requests.get();
+                                    if r.trim().is_empty() { "None".into() } else { r }
+                                }) on_edit=move || step.set(0) />
+                            </dl>
 
-                                <button
-                                    on:click=move |_| step.set(0)
-                                    class="mt-4 text-sm font-bold text-blue-700 hover:underline"
-                                >
-                                    "Edit details"
-                                </button>
+                            <div class="mt-5 rounded-xl bg-blue-50 p-4 text-sm text-blue-900">
+                                <p class="flex items-center gap-2 font-bold">
+                                    <Icon name="info" class="h-4 w-4 shrink-0" />
+                                    "What happens next"
+                                </p>
+                                <ul class="mt-2 flex list-inside list-disc flex-col gap-1">
+                                    <li>"The hotel receives your request and confirms it."</li>
+                                    <li>"Your booking reference appears on the next screen — keep it."</li>
+                                    <li>"Pay the hotel directly on arrival. No card is taken here."</li>
+                                </ul>
                             </div>
-
-                            <div class="flex items-start gap-3 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-                                <Icon name="wallet" class="mt-0.5 h-4.5 w-4.5 shrink-0" />
-                                <div>
-                                    <p class="font-bold">"Payment at the hotel"</p>
-                                    <p class="mt-0.5 leading-relaxed">
-                                        "No card is taken now. Present your booking reference at the front desk and settle the bill there in cash or by card."
-                                    </p>
-                                </div>
-                            </div>
-
-                            <div class=format!(
-                                "flex items-start gap-3 rounded-2xl border p-4 text-sm {}",
-                                if r.refundable { "border-emerald-200 bg-emerald-50 text-emerald-900" } else { "border-amber-200 bg-amber-50 text-amber-900" }
-                            )>
-                                <Icon name=if r.refundable { "check-circle" } else { "alert" } class="mt-0.5 h-4.5 w-4.5 shrink-0" />
-                                <div>
-                                    <p class="font-bold">
-                                        {if r.refundable { "Free cancellation" } else { "Non-refundable rate" }}
-                                    </p>
-                                    <p class="mt-0.5 leading-relaxed">
-                                        {if r.refundable {
-                                            "Cancel free of charge up to 24 hours before check-in from My Reservation."
-                                        } else {
-                                            "This rate cannot be refunded if you cancel or do not arrive."
-                                        }}
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
+                        </section>
                     </Show>
 
-                    // ---- Navigation ---------------------------------------------
+                    // ---- Navigation --------------------------------------
                     <div class="mt-5 flex items-center justify-between gap-3">
                         <button
                             on:click=go_back
                             disabled=move || (step.get() == 0)
-                            class="flex items-center gap-1.5 rounded-xl border border-slate-300 px-5 py-3 text-sm font-bold text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                            class="rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-semibold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-40"
                         >
-                            <Icon name="chevron-left" class="h-4 w-4" />
                             "Back"
                         </button>
 
@@ -552,22 +559,17 @@ fn ReservationWizard(hotel: &'static Hotel, room: &'static RoomType) -> impl Int
                             fallback=move || view! {
                                 <button
                                     on:click=move |ev| submit.with_value(|f| f(ev))
-                                    disabled=submitting
-                                    class="sheen flex items-center gap-2 rounded-xl bg-blue-700 px-7 py-3 text-sm font-bold text-white shadow-lg shadow-blue-700/25 transition-all duration-200 hover:-translate-y-0.5 hover:bg-blue-800 hover:shadow-xl active:scale-[0.98] disabled:opacity-70"
+                                    disabled=move || submitting.get()
+                                    class="sheen flex items-center gap-2 rounded-xl bg-blue-700 px-6 py-3 text-sm font-bold text-white shadow-md shadow-blue-700/20 transition-all duration-200 hover:bg-blue-800 hover:shadow-lg active:scale-[0.98] disabled:opacity-60"
                                 >
-                                    <Show
-                                        when=move || submitting.get()
-                                        fallback=|| view! { <Icon name="check-circle" class="h-4 w-4" /> }
-                                    >
-                                        <span class="animate-spin-slow"><Icon name="loader" class="h-4 w-4" /></span>
-                                    </Show>
-                                    "Confirm reservation"
+                                    {move || if submitting.get() { "Reserving…" } else { "Confirm reservation" }}
+                                    <Icon name="check" class="h-4 w-4" />
                                 </button>
                             }
                         >
                             <button
                                 on:click=go_next
-                                class="sheen flex items-center gap-2 rounded-xl bg-blue-700 px-7 py-3 text-sm font-bold text-white shadow-lg shadow-blue-700/25 transition-all duration-200 hover:-translate-y-0.5 hover:bg-blue-800 hover:shadow-xl active:scale-[0.98]"
+                                class="sheen flex items-center gap-2 rounded-xl bg-blue-700 px-6 py-3 text-sm font-bold text-white shadow-md shadow-blue-700/20 transition-all duration-200 hover:bg-blue-800 hover:shadow-lg active:scale-[0.98]"
                             >
                                 "Continue"
                                 <Icon name="arrow-right" class="h-4 w-4" />
@@ -577,98 +579,75 @@ fn ReservationWizard(hotel: &'static Hotel, room: &'static RoomType) -> impl Int
                 </div>
 
                 // ================= SUMMARY =================
-                <aside class="lg:sticky lg:top-24 lg:h-fit">
-                    <div class="animate-slide-in-right overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg shadow-slate-900/5">
-                        <div class="skeleton relative h-32 overflow-hidden">
-                            <img src=h.image alt=h.name class="h-full w-full object-cover" />
-                            <span class="absolute inset-0 bg-gradient-to-t from-slate-950/80 to-transparent"></span>
-                            <span class="absolute inset-x-4 bottom-3 text-white">
-                                <span class="block text-sm font-bold">{h.name}</span>
-                                <span class="flex items-center gap-1 text-xs text-slate-300">
-                                    <Icon name="map-pin" class="h-3 w-3" />
-                                    {format!("{}, {}", h.area, h.city)}
-                                </span>
-                            </span>
-                        </div>
-
-                        <div class="p-5">
-                            <div class="flex items-start gap-3 border-b border-slate-100 pb-4">
-                                <img src=r.image alt=r.name class="h-14 w-14 shrink-0 rounded-xl object-cover" />
-                                <div class="min-w-0">
-                                    <p class="text-sm font-bold text-slate-900">{r.name}</p>
-                                    <p class="text-xs text-slate-500">{r.beds}</p>
-                                    <p class="text-xs text-slate-500">{format!("Sleeps {} · {} m²", r.guests, r.size_sqm)}</p>
+                <aside class="lg:sticky lg:top-24 lg:self-start">
+                    <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                        {match room_image {
+                            Some(src) => view! {
+                                <img src=src alt=room_name.clone() class="h-32 w-full object-cover" />
+                            }.into_any(),
+                            None => view! {
+                                <div class="flex h-32 w-full items-center justify-center bg-slate-100 text-slate-300">
+                                    <Icon name="bed" class="h-8 w-8" />
                                 </div>
+                            }.into_any(),
+                        }}
+
+                        <div class="p-4">
+                            <p class="text-xs uppercase tracking-wide text-slate-400">{hotel_name.clone()}</p>
+                            <h3 class="mt-0.5 font-bold text-slate-900">{room_name.clone()}</h3>
+                            <p class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                                <span class="flex items-center gap-1">
+                                    <Icon name="home" class="h-3.5 w-3.5" />
+                                    {format!("Room {room_number}")}
+                                </span>
+                                <Show when={ let b = bed_summary.clone(); move || !b.is_empty() }>
+                                    <span class="flex items-center gap-1">
+                                        <Icon name="bed" class="h-3.5 w-3.5" />
+                                        {bed_summary.clone()}
+                                    </span>
+                                </Show>
+                            </p>
+                            <Show when=move || breakfast>
+                                <p class="mt-1.5 flex items-center gap-1 text-xs font-semibold text-emerald-700">
+                                    <Icon name="coffee" class="h-3.5 w-3.5" />
+                                    "Breakfast included"
+                                </p>
+                            </Show>
+
+                            // ---- Live price breakdown ---------------------
+                            <div class="mt-4 border-t border-slate-100 pt-4">
+                                <Suspense fallback=|| view! {
+                                    <div class="skeleton h-24 rounded-xl"></div>
+                                }>
+                                    {move || Suspend::new(async move {
+                                        match quote.await {
+                                            Ok(q) => view! { <QuoteBreakdown quote=q currency=cur.get_value() /> }.into_any(),
+                                            Err(e) => view! {
+                                                <div>
+                                                    <p class="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                                        {e.to_string()}
+                                                    </p>
+                                                    <p class="mt-2 text-xs text-slate-400">
+                                                        {format!(
+                                                            "Published rate {} {} per night.",
+                                                            cur.get_value(),
+                                                            money_round(nightly),
+                                                        )}
+                                                    </p>
+                                                </div>
+                                            }.into_any(),
+                                        }
+                                    })}
+                                </Suspense>
                             </div>
 
-                            <dl class="flex flex-col gap-2 py-4 text-sm">
-                                <div class="flex justify-between gap-3">
-                                    <dt class="text-slate-500">"Check-in"</dt>
-                                    <dd class="font-semibold text-slate-800">{move || pretty_date(&check_in.get())}</dd>
-                                </div>
-                                <div class="flex justify-between gap-3">
-                                    <dt class="text-slate-500">"Check-out"</dt>
-                                    <dd class="font-semibold text-slate-800">{move || pretty_date(&check_out.get())}</dd>
-                                </div>
-                                <div class="flex justify-between gap-3">
-                                    <dt class="text-slate-500">"Guests"</dt>
-                                    <dd class="font-semibold text-slate-800">
-                                        {move || format!("{} · {}", pluralize(guests.get(), "guest"), pluralize(rooms.get(), "room"))}
-                                    </dd>
-                                </div>
-                            </dl>
-
-                            <dl class="flex flex-col gap-2 border-t border-slate-100 py-4 text-sm">
-                                <div class="flex justify-between gap-3">
-                                    <dt class="text-slate-500">
-                                        {move || format!(
-                                            "ETB {} × {} × {}",
-                                            thousands(r.price_per_night),
-                                            pluralize(nights.get(), "night"),
-                                            pluralize(rooms.get(), "room")
-                                        )}
-                                    </dt>
-                                    <dd class="shrink-0 font-semibold text-slate-800 tabular-nums">
-                                        {move || thousands(subtotal.get())}
-                                    </dd>
-                                </div>
-                                <div class="flex justify-between gap-3">
-                                    <dt class="flex items-center gap-1 text-slate-500">
-                                        "Taxes & tourism levy"
-                                        <span class="text-xs text-slate-400">"(15%)"</span>
-                                    </dt>
-                                    <dd class="shrink-0 font-semibold text-slate-800 tabular-nums">
-                                        {move || thousands(taxes.get())}
-                                    </dd>
-                                </div>
-                                <div class="flex justify-between gap-3">
-                                    <dt class="text-slate-500">"Booking fee"</dt>
-                                    <dd class="shrink-0 font-bold text-emerald-600">"FREE"</dd>
-                                </div>
-                            </dl>
-
-                            <div class="flex items-end justify-between gap-3 border-t border-slate-200 pt-4">
+                            <div class="mt-4 flex items-start gap-2 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-900">
+                                <Icon name="shield-check" class="mt-0.5 h-3.5 w-3.5 shrink-0" />
                                 <span>
-                                    <span class="block text-sm font-bold text-slate-800">"Total"</span>
-                                    <span class="block text-xs text-slate-400">"Payable at the hotel"</span>
-                                </span>
-                                <span class="text-2xl font-extrabold tracking-tight text-slate-900 tabular-nums">
-                                    {move || format!("ETB {}", thousands(total.get()))}
+                                    <span class="font-bold">"No payment now. "</span>
+                                    "You settle directly with the hotel on arrival, and this portal charges no booking fee."
                                 </span>
                             </div>
-
-                            <ul class="mt-4 flex flex-col gap-2 border-t border-slate-100 pt-4 text-xs text-slate-600">
-                                {[
-                                    ("shield-check", "No booking fees, ever"),
-                                    ("wallet", "Nothing charged online"),
-                                    ("check-circle", "Confirmed instantly"),
-                                ].into_iter().map(|(icon, label)| view! {
-                                    <li class="flex items-center gap-2">
-                                        <Icon name=icon class="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                                        {label}
-                                    </li>
-                                }).collect_view()}
-                            </ul>
                         </div>
                     </div>
                 </aside>
@@ -677,52 +656,130 @@ fn ReservationWizard(hotel: &'static Hotel, room: &'static RoomType) -> impl Int
     }
 }
 
+/// The API's own price breakdown, shown line for line.
+#[component]
+fn QuoteBreakdown(quote: Quote, currency: String) -> impl IntoView {
+    let c = currency.clone();
+    let line = move |label: String, amount: f64| {
+        let c = c.clone();
+        view! {
+            <div class="flex items-baseline justify-between gap-3 text-sm">
+                <dt class="text-slate-500">{label}</dt>
+                <dd class="tabular-nums text-slate-700">{format!("{c} {}", money(amount))}</dd>
+            </div>
+        }
+    };
+
+    view! {
+        <dl class="flex flex-col gap-1.5">
+            {line(
+                format!(
+                    "{} x {}",
+                    money_round(quote.daily_room_rate),
+                    pluralize(quote.number_of_nights, "night"),
+                ),
+                quote.base_room_charge,
+            )}
+            {(quote.extra_bed_charge > 0.0).then(|| line(
+                format!("Extra beds ({})", quote.extra_bed_count),
+                quote.extra_bed_charge,
+            ))}
+            {(quote.pet_charge > 0.0).then(|| line("Pet charge".to_string(), quote.pet_charge))}
+            {(quote.discount_amount > 0.0).then(|| line("Discount".to_string(), -quote.discount_amount))}
+            {(quote.tax_amount > 0.0).then(|| line(
+                format!("Tax ({:.0}%)", quote.tax_rate_percent),
+                quote.tax_amount,
+            ))}
+
+            <div class="mt-2 flex items-baseline justify-between gap-3 border-t border-slate-100 pt-2">
+                <dt class="text-sm font-bold text-slate-900">"Total"</dt>
+                <dd class="text-lg font-extrabold tabular-nums text-slate-900">
+                    {format!("{currency} {}", money(quote.total_amount))}
+                </dd>
+            </div>
+            <p class="text-xs text-slate-400">"Payable at the hotel"</p>
+        </dl>
+    }
+}
+
+#[component]
+fn Field(
+    label: &'static str,
+    value: RwSignal<String>,
+    class: &'static str,
+    #[prop(default = "text")] kind: &'static str,
+    #[prop(default = "")] placeholder: &'static str,
+) -> impl IntoView {
+    view! {
+        <div>
+            <label class="mb-1.5 block text-sm font-semibold text-slate-700">{label}</label>
+            <input type=kind placeholder=placeholder class=class
+                prop:value=value on:input:target=move |ev| value.set(ev.target().value()) />
+        </div>
+    }
+}
+
+#[component]
+fn Check(label: &'static str, hint: &'static str, value: RwSignal<bool>) -> impl IntoView {
+    view! {
+        <label class="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 p-3 transition-colors hover:bg-slate-50">
+            <input type="checkbox" class="mt-0.5 h-4 w-4 shrink-0" prop:checked=value
+                on:change:target=move |ev| value.set(ev.target().checked()) />
+            <span class="min-w-0">
+                <span class="block text-sm font-medium text-slate-800">{label}</span>
+                <span class="block text-xs text-slate-500">{hint}</span>
+            </span>
+        </label>
+    }
+}
+
 #[component]
 fn NumberField(value: RwSignal<u32>, min: u32, max: u32, icon: &'static str) -> impl IntoView {
-    let btn = "flex h-9 w-9 items-center justify-center rounded-lg border border-slate-300 text-slate-600 transition-all duration-150 hover:border-blue-400 hover:text-blue-700 active:scale-90 disabled:cursor-not-allowed disabled:opacity-35";
     view! {
-        <div class="flex items-center justify-between gap-3 rounded-xl border border-slate-300 px-3 py-2">
-            <span class="flex items-center gap-2 text-sm font-semibold text-slate-800">
-                <Icon name=icon class="h-4 w-4 text-slate-400" />
-                <span class="tabular-nums">{move || value.get()}</span>
+        <div class="flex items-center gap-2 rounded-xl border border-slate-300 px-3 py-2">
+            <Icon name=icon class="h-4 w-4 shrink-0 text-slate-400" />
+            <button
+                type="button"
+                class="flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 disabled:opacity-30"
+                disabled=move || (value.get() <= min)
+                on:click=move |_| value.update(|v| *v = v.saturating_sub(1).max(min))
+            >
+                <Icon name="minus" class="h-3.5 w-3.5" />
+            </button>
+            <span class="min-w-6 flex-1 text-center text-sm font-bold tabular-nums text-slate-800">
+                {move || value.get()}
             </span>
-            <span class="flex items-center gap-2">
-                <button
-                    class=btn
-                    disabled=move || (value.get() <= min)
-                    on:click=move |_| value.update(|v| *v = v.saturating_sub(1).max(min))
-                >
-                    <Icon name="minus" class="h-3.5 w-3.5" />
-                </button>
-                <button
-                    class=btn
-                    disabled=move || (value.get() >= max)
-                    on:click=move |_| value.update(|v| *v = (*v + 1).min(max))
-                >
-                    <Icon name="plus" class="h-3.5 w-3.5" />
-                </button>
-            </span>
+            <button
+                type="button"
+                class="flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 disabled:opacity-30"
+                disabled=move || (value.get() >= max)
+                on:click=move |_| value.update(|v| *v = (*v + 1).min(max))
+            >
+                <Icon name="plus" class="h-3.5 w-3.5" />
+            </button>
         </div>
     }
 }
 
 #[component]
 fn ReviewRow(
-    icon: &'static str,
     label: &'static str,
-    #[prop(into)] value: Signal<String>,
+    value: Signal<String>,
+    on_edit: impl Fn() + Copy + Send + Sync + 'static,
 ) -> impl IntoView {
     view! {
-        <div class="flex items-start justify-between gap-4 py-3">
-            <dt class="flex shrink-0 items-center gap-2 text-sm text-slate-500">
-                <Icon name=icon class="h-4 w-4 text-slate-400" />
-                {label}
-            </dt>
-            <dd class="text-right text-sm font-semibold text-slate-800">
-                {move || {
-                    let v = value.get();
-                    if v.trim().is_empty() { "—".to_string() } else { v }
-                }}
+        <div class="flex items-start justify-between gap-3 py-2.5">
+            <dt class="shrink-0 text-sm text-slate-500">{label}</dt>
+            <dd class="flex min-w-0 items-start gap-2">
+                <span class="min-w-0 break-words text-right text-sm font-semibold text-slate-800">
+                    {move || value.get()}
+                </span>
+                <button
+                    class="shrink-0 text-xs font-semibold text-blue-700 hover:underline"
+                    on:click=move |_| on_edit()
+                >
+                    "Edit"
+                </button>
             </dd>
         </div>
     }
