@@ -10,8 +10,7 @@
 //! moment those fields exist upstream.
 
 use crate::api::{
-    hotel_from_prices, list_amenities, list_cities, list_hotels, money_round, Amenity, City,
-    HotelQuery,
+    hotel_from_prices, list_amenities, list_cities, list_hotels, Amenity, City, HotelQuery,
 };
 use crate::components::{
     EmptyState, HotelApiCard, HotelApiCardCompact, Icon, SearchWidget, SkeletonCard,

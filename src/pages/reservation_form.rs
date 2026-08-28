@@ -50,31 +50,35 @@ fn nights_between(check_in: &str, check_out: &str) -> Option<u32> {
     (diff >= 1).then_some(diff as u32)
 }
 
-/// Today, from the browser clock on the client and a fixed fallback on the
-/// server — the value is only used to seed the date inputs.
+/// Today, from the browser clock on the client and the system clock on the
+/// server. Both sides must produce a real date: leaving it blank during SSR
+/// makes the price quote fail before hydration can fill it in.
 fn today_iso() -> String {
     #[cfg(feature = "hydrate")]
     {
         let now = js_sys::Date::new_0();
-        return format!(
+        format!(
             "{:04}-{:02}-{:02}",
             now.get_full_year(),
             now.get_month() + 1,
             now.get_date()
-        );
+        )
     }
     #[cfg(not(feature = "hydrate"))]
     {
-        String::new()
+        // UTC is close enough to seed a date picker, and the guest can change it.
+        let days = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() / 86_400)
+            .unwrap_or(0) as i64;
+        let (y, m, d) = civil_from_days(days);
+        format!("{y:04}-{m:02}-{d:02}")
     }
 }
 
-/// Moves an ISO date by whole days (Howard Hinnant's `civil_from_days`).
-fn plus_days(iso: &str, days: i64) -> String {
-    let Some((y, m, d)) = parse_iso(iso) else {
-        return String::new();
-    };
-    let z = days_from_civil(y, m, d) + days + 719_468;
+/// Inverse of [`days_from_civil`] (Howard Hinnant's `civil_from_days`).
+fn civil_from_days(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = z - era * 146_097;
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
@@ -83,7 +87,15 @@ fn plus_days(iso: &str, days: i64) -> String {
     let mp = (5 * doy + 2) / 153;
     let day = doy - (153 * mp + 2) / 5 + 1;
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = if month <= 2 { year + 1 } else { year };
+    (if month <= 2 { year + 1 } else { year }, month, day)
+}
+
+/// Moves an ISO date by whole days.
+fn plus_days(iso: &str, days: i64) -> String {
+    let Some((y, m, d)) = parse_iso(iso) else {
+        return String::new();
+    };
+    let (year, month, day) = civil_from_days(days_from_civil(y, m, d) + days);
     format!("{year:04}-{month:02}-{day:02}")
 }
 
@@ -157,10 +169,10 @@ fn ReservationWizard(hotel: HotelDetail, room: RoomSummary) -> impl IntoView {
     let extra_beds_allowed = policies.extrabed_available.unwrap_or(false);
     let pets_allowed = policies.pet_allowed.unwrap_or(false);
 
-    // Seed the dates from tomorrow so the API's "not in the past" rule passes.
+    // Seeded from tomorrow so the API's "check-in not in the past" rule passes.
     let start = today_iso();
-    let default_in = if start.is_empty() { String::new() } else { plus_days(&start, 1) };
-    let default_out = if start.is_empty() { String::new() } else { plus_days(&start, 3) };
+    let default_in = plus_days(&start, 1);
+    let default_out = plus_days(&start, 3);
 
     let step = RwSignal::new(0usize);
     let first_name = RwSignal::new(String::new());
@@ -193,12 +205,14 @@ fn ReservationWizard(hotel: HotelDetail, room: RoomSummary) -> impl IntoView {
             )
         },
         |(room_id, ci, co, g, eb, pet)| async move {
+            // A range that is not yet a whole night is an unfinished form, not an
+            // error — return nothing rather than shouting at the guest.
             if nights_between(&ci, &co).is_none() {
-                return Err(ServerFnError::new(
-                    "Check-out must be at least one night after check-in.",
-                ));
+                return Ok(None);
             }
-            crate::api::get_quote(room_id, ci, co, g, eb, pet).await
+            crate::api::get_quote(room_id, ci, co, g, eb, pet)
+                .await
+                .map(Some)
         },
     );
 
@@ -621,7 +635,16 @@ fn ReservationWizard(hotel: HotelDetail, room: RoomSummary) -> impl IntoView {
                                 }>
                                     {move || Suspend::new(async move {
                                         match quote.await {
-                                            Ok(q) => view! { <QuoteBreakdown quote=q currency=cur.get_value() /> }.into_any(),
+                                            Ok(Some(q)) => view! { <QuoteBreakdown quote=q currency=cur.get_value() /> }.into_any(),
+                                            Ok(None) => view! {
+                                                <p class="text-sm text-slate-500">
+                                                    {format!(
+                                                        "Published rate {} {} per night. Pick your dates to see the total.",
+                                                        cur.get_value(),
+                                                        money_round(nightly),
+                                                    )}
+                                                </p>
+                                            }.into_any(),
                                             Err(e) => view! {
                                                 <div>
                                                     <p class="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800">

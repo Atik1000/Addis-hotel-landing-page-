@@ -13,8 +13,10 @@
 
 use crate::api::Reservation;
 
+#[cfg(feature = "hydrate")]
 const KEY: &str = "addis.bookings";
 /// Enough to be useful, small enough never to strain `localStorage`.
+#[cfg(feature = "hydrate")]
 const LIMIT: usize = 20;
 
 #[cfg(feature = "hydrate")]

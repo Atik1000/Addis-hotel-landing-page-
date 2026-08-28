@@ -288,24 +288,31 @@ fn Stepper(
     }
 }
 
-/// An ISO date `offset` days from today. Empty on the server, where there is no
-/// clock the guest would recognise — hydration fills it in.
+/// An ISO date `offset` days from today, on both the server and the client, so
+/// the rendered form is usable before hydration.
 fn default_date(offset: i64) -> String {
     #[cfg(feature = "hydrate")]
-    {
+    let days = {
         let now = js_sys::Date::new_0();
-        let shifted = js_sys::Date::new(&js_sys::Date::new_0().into());
-        shifted.set_date(now.get_date() + offset as u32);
-        return format!(
-            "{:04}-{:02}-{:02}",
-            shifted.get_full_year(),
-            shifted.get_month() + 1,
-            shifted.get_date(),
-        );
-    }
+        // `Date::now()` is milliseconds UTC; floor to whole local days.
+        ((now.get_time() - now.get_timezone_offset() * 60_000.0) / 86_400_000.0).floor() as i64
+    };
     #[cfg(not(feature = "hydrate"))]
-    {
-        let _ = offset;
-        String::new()
-    }
+    let days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 86_400)
+        .unwrap_or(0) as i64;
+
+    // Howard Hinnant's `civil_from_days`.
+    let z = days + offset + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { year + 1 } else { year };
+    format!("{year:04}-{month:02}-{day:02}")
 }
