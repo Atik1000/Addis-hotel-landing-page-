@@ -36,6 +36,25 @@ Outputs the server binary to `target/release/` and the site assets to
 `target/site/`. Both are needed at runtime; point `LEPTOS_SITE_ROOT` at the
 `site` directory.
 
+## Deploying
+
+The server binary and the WASM bundle **must come from the same build**. Two
+things break if they do not, and both look like something else:
+
+* `server_fn` appends a build-dependent hash to each endpoint
+  (`/api/create_booking11577548270673338535`). Mismatched builds hash
+  differently, the browser POSTs a route the server never registered, and the
+  SSR 404 page comes back as
+  `error deserializing server function results: Invalid format`.
+* `leptos` appends `_bg` to the WASM filename unless `LEPTOS_OUTPUT_NAME` is set
+  **at compile time** — it reads it with `option_env!`. `cargo leptos` sets it;
+  a bare `cargo build` does not, so the page requests a file that was never
+  emitted and nothing on the site is interactive.
+
+So always build with `cargo leptos build --release`, never a bare `cargo build`,
+and ship `target/site/` alongside the binary from that same run. Deploy the
+whole `site` directory and the binary, then restart the service.
+
 ## Layout
 
 ```

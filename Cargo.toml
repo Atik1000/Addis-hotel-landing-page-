@@ -69,3 +69,10 @@ bin-default-features = false
 lib-features = ["hydrate"]
 lib-default-features = false
 lib-profile-release = "wasm-release"
+# Content-addressed asset filenames. Without this the bundle is served as a
+# fixed `addis-landing-website.wasm`, which browsers cache heuristically (the
+# server sends no Cache-Control), so a returning visitor keeps running the
+# previous deploy's WASM against the new server — and every server function
+# 404s, because `server_fn` hashes its endpoints per build. Hashed names make
+# each deploy a new URL, so that cannot happen.
+hash-files = true
