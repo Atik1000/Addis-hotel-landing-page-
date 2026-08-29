@@ -1,7 +1,7 @@
 use crate::components::{provide_toasts, Footer, Header, MobileTabBar, ToastHost};
 use crate::pages::*;
 use leptos::prelude::*;
-use leptos_meta::{provide_meta_context, MetaTags, Stylesheet, Title};
+use leptos_meta::{provide_meta_context, HashedStylesheet, MetaTags, Title};
 use leptos_router::{
     components::{Route, Router, Routes},
     hooks::use_location,
@@ -22,6 +22,7 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <meta property="og:type" content="website"/>
                 <link rel="preconnect" href="https://images.unsplash.com"/>
                 <AutoReload options=options.clone() />
+                <HashedStylesheet options=options.clone() id="leptos"/>
                 <HydrationScripts options/>
                 <MetaTags/>
             </head>
@@ -38,7 +39,6 @@ pub fn App() -> impl IntoView {
     provide_toasts();
 
     view! {
-        <Stylesheet id="leptos" href="/pkg/addis-landing-website.css"/>
         <Title text="Horn of Africa Hotel Portal"/>
 
         <Router>
