@@ -75,7 +75,7 @@ pub fn SectionHeading(
                 <span class="h-1.5 w-1.5 rounded-full bg-blue-600"></span>
                 {eyebrow}
             </span>
-            <h2 class="text-2xl font-extrabold tracking-tight text-slate-900 sm:text-3xl">{title}</h2>
+            <h2 class="text-2xl font-bold tracking-tight text-ink sm:text-3xl">{title}</h2>
             <Show when=move || !subtitle.is_empty()>
                 <p class=format!("max-w-2xl text-sm leading-relaxed text-slate-500 sm:text-base {}", if center { "mx-auto" } else { "" })>
                     {subtitle}
@@ -298,7 +298,7 @@ pub fn Modal(
             ></div>
             <div class=format!("relative max-h-[88vh] w-full {width} animate-scale-in overflow-y-auto rounded-2xl bg-white shadow-2xl")>
                 <div class="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-slate-100 bg-white/95 px-6 py-4 backdrop-blur">
-                    <h2 class="text-lg font-bold text-slate-900">{title}</h2>
+                    <h2 class="text-lg font-bold text-ink">{title}</h2>
                     <button
                         aria-label="Close"
                         class="flex h-9 w-9 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-700"

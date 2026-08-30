@@ -15,7 +15,7 @@ pub fn NotFoundPage() -> impl IntoView {
             <div class="relative mx-auto flex max-w-xl flex-col items-center px-4 py-24 text-center">
                 <div class="relative mb-6 flex h-24 w-24 animate-float items-center justify-center rounded-3xl bg-white text-blue-700 shadow-xl shadow-blue-900/10 ring-1 ring-slate-200">
                     <Icon name="map" class="h-11 w-11" />
-                    <span class="absolute -right-2 -top-2 flex h-9 w-9 items-center justify-center rounded-full bg-red-500 text-sm font-extrabold text-white shadow-lg">
+                    <span class="absolute -right-2 -top-2 flex h-9 w-9 items-center justify-center rounded-full bg-red-500 text-sm font-bold text-white shadow-lg">
                         "?"
                     </span>
                 </div>
@@ -23,7 +23,7 @@ pub fn NotFoundPage() -> impl IntoView {
                 <p class="animate-fade-up bg-gradient-to-r from-blue-700 to-indigo-700 bg-clip-text text-7xl font-black tracking-tighter text-transparent">
                     "404"
                 </p>
-                <h1 class="mt-2 animate-fade-up text-2xl font-extrabold tracking-tight text-slate-900" style="animation-delay: 90ms">
+                <h1 class="mt-2 animate-fade-up text-2xl font-bold tracking-tight text-ink" style="animation-delay: 90ms">
                     "This page has checked out"
                 </h1>
                 <p class="mt-2 max-w-sm animate-fade-up text-sm leading-relaxed text-slate-500" style="animation-delay: 140ms">

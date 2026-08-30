@@ -12,6 +12,7 @@ mod not_found;
 mod reservation_details;
 mod reservation_form;
 mod retrieve_booking;
+mod room_details;
 
 pub use about::AboutPage;
 pub use confirmation::ConfirmationPage;
@@ -27,3 +28,4 @@ pub use not_found::NotFoundPage;
 pub use reservation_details::ReservationDetailsPage;
 pub use reservation_form::ReservationFormPage;
 pub use retrieve_booking::RetrieveBookingPage;
+pub use room_details::RoomDetailsPage;

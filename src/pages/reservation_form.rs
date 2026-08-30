@@ -132,7 +132,7 @@ pub fn ReservationFormPage() -> impl IntoView {
                             <span class="flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 text-slate-400">
                                 <Icon name="bed" class="h-7 w-7" />
                             </span>
-                            <h1 class="text-xl font-bold text-slate-900">"Room not found"</h1>
+                            <h1 class="text-xl font-bold text-ink">"Room not found"</h1>
                             <p class="text-sm text-slate-500">"That room is no longer listed for this hotel."</p>
                             <A href="/hotels" attr:class="mt-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white transition-colors hover:bg-blue-800">
                                 "Browse hotels"
@@ -160,7 +160,12 @@ fn ReservationWizard(hotel: HotelDetail, room: RoomSummary) -> impl IntoView {
     let cur = StoredValue::new(currency.clone());
     let room_label = StoredValue::new(room.name.clone());
     let nightly = room.price();
-    let room_image = room.primary_image.clone().filter(|u| u.starts_with("http"));
+    let room_image = crate::images::room_image(
+        room.id,
+        room.primary_image.as_deref(),
+        room.room_type.as_deref(),
+        500,
+    );
     let bed_summary = room.bed_summary();
     let breakfast = room.breakfast_included;
     let policies = hotel.policies.clone().unwrap_or_default();
@@ -389,7 +394,7 @@ fn ReservationWizard(hotel: HotelDetail, room: RoomSummary) -> impl IntoView {
                                 <span class="block text-[11px] uppercase tracking-wide text-slate-400">{format!("Step {}", i + 1)}</span>
                                 <span class=move || format!(
                                     "block truncate text-sm font-bold transition-colors {}",
-                                    if step.get() >= i { "text-slate-900" } else { "text-slate-400" }
+                                    if step.get() >= i { "text-ink" } else { "text-slate-400" }
                                 )>
                                     {label}
                                 </span>
@@ -423,7 +428,7 @@ fn ReservationWizard(hotel: HotelDetail, room: RoomSummary) -> impl IntoView {
                     // ---- Step 1: guest details ---------------------------
                     <Show when=move || (step.get() == 0)>
                         <section class="animate-fade-up rounded-2xl border border-slate-200 bg-white p-5">
-                            <h2 class="text-lg font-bold text-slate-900">"Who is the reservation for?"</h2>
+                            <h2 class="text-lg font-bold text-ink">"Who is the reservation for?"</h2>
                             <p class="mt-1 text-sm text-slate-500">
                                 "No account needed. We use these details to hold the room and to let you retrieve the booking later."
                             </p>
@@ -460,7 +465,7 @@ fn ReservationWizard(hotel: HotelDetail, room: RoomSummary) -> impl IntoView {
                     // ---- Step 2: the stay --------------------------------
                     <Show when=move || (step.get() == 1)>
                         <section class="animate-fade-up rounded-2xl border border-slate-200 bg-white p-5">
-                            <h2 class="text-lg font-bold text-slate-900">"When are you staying?"</h2>
+                            <h2 class="text-lg font-bold text-ink">"When are you staying?"</h2>
                             <p class="mt-1 text-sm text-slate-500">
                                 {format!("Check-in from {checkin_time}, check-out by {checkout_time}.")}
                             </p>
@@ -514,7 +519,7 @@ fn ReservationWizard(hotel: HotelDetail, room: RoomSummary) -> impl IntoView {
                     // ---- Step 3: review ----------------------------------
                     <Show when=move || (step.get() == 2)>
                         <section class="animate-fade-up rounded-2xl border border-slate-200 bg-white p-5">
-                            <h2 class="text-lg font-bold text-slate-900">"Check everything over"</h2>
+                            <h2 class="text-lg font-bold text-ink">"Check everything over"</h2>
                             <p class="mt-1 text-sm text-slate-500">
                                 "Nothing is charged now — you pay the hotel when you arrive."
                             </p>
@@ -595,20 +600,11 @@ fn ReservationWizard(hotel: HotelDetail, room: RoomSummary) -> impl IntoView {
                 // ================= SUMMARY =================
                 <aside class="lg:sticky lg:top-24 lg:self-start">
                     <div class="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-                        {match room_image {
-                            Some(src) => view! {
-                                <img src=src alt=room_name.clone() class="h-32 w-full object-cover" />
-                            }.into_any(),
-                            None => view! {
-                                <div class="flex h-32 w-full items-center justify-center bg-slate-100 text-slate-300">
-                                    <Icon name="bed" class="h-8 w-8" />
-                                </div>
-                            }.into_any(),
-                        }}
+                        <img src=room_image alt=room_name.clone() class="h-32 w-full object-cover" />
 
                         <div class="p-4">
                             <p class="text-xs uppercase tracking-wide text-slate-400">{hotel_name.clone()}</p>
-                            <h3 class="mt-0.5 font-bold text-slate-900">{room_name.clone()}</h3>
+                            <h3 class="mt-0.5 font-bold text-ink">{room_name.clone()}</h3>
                             <p class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                                 <span class="flex items-center gap-1">
                                     <Icon name="home" class="h-3.5 w-3.5" />
@@ -715,8 +711,8 @@ fn QuoteBreakdown(quote: Quote, currency: String) -> impl IntoView {
             ))}
 
             <div class="mt-2 flex items-baseline justify-between gap-3 border-t border-slate-100 pt-2">
-                <dt class="text-sm font-bold text-slate-900">"Total"</dt>
-                <dd class="text-lg font-extrabold tabular-nums text-slate-900">
+                <dt class="text-sm font-bold text-ink">"Total"</dt>
+                <dd class="text-lg font-bold tabular-nums text-ink">
                     {format!("{currency} {}", money(quote.total_amount))}
                 </dd>
             </div>

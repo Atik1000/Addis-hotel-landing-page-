@@ -275,7 +275,7 @@ fn Stepper(
                 >
                     <Icon name="minus" class="h-3.5 w-3.5" />
                 </button>
-                <span class="w-6 text-center text-sm font-bold tabular-nums text-slate-900">{move || value.get()}</span>
+                <span class="w-6 text-center text-sm font-bold tabular-nums text-ink">{move || value.get()}</span>
                 <button
                     class=btn
                     disabled=move || (value.get() >= max)

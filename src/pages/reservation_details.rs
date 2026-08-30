@@ -124,7 +124,7 @@ fn Details(
                                 <p class="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
                                     "Booking reference"
                                 </p>
-                                <h1 class="mt-1 break-all text-2xl font-extrabold tracking-wide tabular-nums text-slate-900">
+                                <h1 class="mt-1 break-all text-2xl font-bold tracking-wide tabular-nums text-ink">
                                     {reference.clone()}
                                 </h1>
                             </div>
@@ -137,7 +137,7 @@ fn Details(
                         </div>
 
                         <div class="mt-5 border-t border-slate-100 pt-5">
-                            <p class="text-lg font-bold text-slate-900">{hotel_name.clone()}</p>
+                            <p class="text-lg font-bold text-ink">{hotel_name.clone()}</p>
                             {(!location.is_empty()).then(|| view! {
                                 <p class="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-slate-500">
                                     <Icon name="map-pin" class="h-3.5 w-3.5 shrink-0" />
@@ -177,7 +177,7 @@ fn Details(
                                 <span class="block text-sm font-bold text-slate-800">"Room charge"</span>
                                 <span class="block text-xs text-slate-500">"Payable at the hotel · taxes added at checkout"</span>
                             </span>
-                            <span class="text-xl font-extrabold tabular-nums text-slate-900">
+                            <span class="text-xl font-bold tabular-nums text-ink">
                                 {format!("{currency} {}", money_round(subtotal))}
                             </span>
                         </div>
@@ -185,7 +185,7 @@ fn Details(
 
                     // ---- Guest ----------------------------------------
                     <div class="mt-5 rounded-2xl border border-slate-200 bg-white p-6">
-                        <h2 class="text-sm font-bold text-slate-900">"Guest details"</h2>
+                        <h2 class="text-sm font-bold text-ink">"Guest details"</h2>
                         <dl class="mt-3 flex flex-col gap-2.5 text-sm">
                             <Row label="Name" value=b.guest.name.clone() />
                             <Row label="Email" value=b.guest.email.clone().unwrap_or_default() />
@@ -208,7 +208,7 @@ fn Details(
 
                     // ---- Contact the hotel ----------------------------
                     <div class="mt-5 rounded-2xl border border-slate-200 bg-white p-6">
-                        <h2 class="text-sm font-bold text-slate-900">"Need to change something?"</h2>
+                        <h2 class="text-sm font-bold text-ink">"Need to change something?"</h2>
                         <p class="mt-1 text-sm text-slate-500">
                             "Changes and cancellations are handled by the property directly — contact them with your reference."
                         </p>
@@ -260,7 +260,7 @@ fn NeedsRetrieval(#[prop(into)] reference: String) -> impl IntoView {
             <span class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-400">
                 <Icon name="lock" class="h-6 w-6" />
             </span>
-            <h1 class="text-xl font-bold text-slate-900">"Verify to see this booking"</h1>
+            <h1 class="text-xl font-bold text-ink">"Verify to see this booking"</h1>
             <p class="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-slate-500">
                 {format!(
                     "Reservations are private. To open {reference} we'll send a one-time code to the email or phone recorded on it.",

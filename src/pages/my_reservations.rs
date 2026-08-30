@@ -59,7 +59,7 @@ pub fn MyReservationsPage() -> impl IntoView {
         <div class="mx-auto max-w-3xl px-4 py-8">
             <div class="flex flex-wrap items-end justify-between gap-3">
                 <div>
-                    <h1 class="text-2xl font-extrabold tracking-tight text-slate-900">"My reservations"</h1>
+                    <h1 class="text-2xl font-bold tracking-tight text-ink">"My reservations"</h1>
                     <p class="mt-1 text-sm text-slate-500">
                         "Bookings made or retrieved in this browser."
                     </p>
@@ -141,7 +141,7 @@ fn BookingCard(booking: Reservation) -> impl IntoView {
             <div class="flex flex-wrap items-start justify-between gap-3">
                 <div class="min-w-0">
                     <p class="flex flex-wrap items-center gap-2">
-                        <span class="font-bold text-slate-900">{booking.organization_name.clone()}</span>
+                        <span class="font-bold text-ink">{booking.organization_name.clone()}</span>
                         <span class=format!(
                             "rounded-full px-2 py-0.5 text-[11px] font-bold {}",
                             status_class(&status)
@@ -174,7 +174,7 @@ fn BookingCard(booking: Reservation) -> impl IntoView {
 
                 <div class="shrink-0 text-right">
                     <p class="text-[11px] uppercase tracking-wide text-slate-400">{reference.clone()}</p>
-                    <p class="mt-0.5 text-lg font-extrabold tabular-nums text-slate-900">
+                    <p class="mt-0.5 text-lg font-bold tabular-nums text-ink">
                         {format!("ETB {}", money_round(booking.room_subtotal()))}
                     </p>
                     <p class="text-[11px] text-slate-400">"at the hotel"</p>
@@ -191,7 +191,7 @@ fn NothingSaved() -> impl IntoView {
             <span class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-400">
                 <Icon name="calendar" class="h-6 w-6" />
             </span>
-            <h2 class="text-lg font-bold text-slate-900">"No bookings in this browser yet"</h2>
+            <h2 class="text-lg font-bold text-ink">"No bookings in this browser yet"</h2>
             <p class="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-slate-500">
                 "Book a room and it appears here automatically. Already booked elsewhere? Retrieve it with your reference and a one-time code."
             </p>

@@ -18,6 +18,9 @@
   --color-brand-900: #1e3a8a;
   --color-brand-950: #0b1a3d;
 
+  /* Title ink. Every heading on a light ground uses this. */
+  --color-ink: #1E293B;
+
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
 }

@@ -223,7 +223,7 @@ pub fn ListingsPage() -> impl IntoView {
             <div class="mx-auto max-w-6xl px-4 py-5">
                 <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
                     <div class="animate-fade-up">
-                        <h1 class="text-2xl font-extrabold tracking-tight text-slate-900">{heading}</h1>
+                        <h1 class="text-2xl font-bold tracking-tight text-ink">{heading}</h1>
                         <p class="mt-1 flex items-center gap-1.5 text-sm text-slate-500">
                             <Icon name="check-circle" class="h-3.5 w-3.5 text-emerald-600" />
                             <Suspense fallback=|| view! { <span>"Searching…"</span> }>
@@ -252,7 +252,7 @@ pub fn ListingsPage() -> impl IntoView {
             )>
                 <div class="lg:sticky lg:top-24">
                     <div class="mb-3 flex items-center justify-between lg:hidden">
-                        <h2 class="text-lg font-bold text-slate-900">"Filters"</h2>
+                        <h2 class="text-lg font-bold text-ink">"Filters"</h2>
                         <button
                             class="flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
                             on:click=move |_| filters_open.set(false)

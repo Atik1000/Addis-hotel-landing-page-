@@ -44,7 +44,7 @@ pub fn AboutPage() -> impl IntoView {
                     <Icon name="building" class="h-3.5 w-3.5" />
                     "About the portal"
                 </span>
-                <h1 class="mt-5 animate-fade-up text-4xl font-extrabold leading-tight tracking-tight sm:text-5xl" style="animation-delay: 80ms">
+                <h1 class="mt-5 animate-fade-up text-4xl font-bold leading-tight tracking-tight sm:text-5xl" style="animation-delay: 80ms">
                     "Booking a hotel here should be "
                     <span class="bg-gradient-to-r from-sky-300 to-cyan-200 bg-clip-text text-transparent">"simple"</span>
                 </h1>
@@ -64,7 +64,7 @@ pub fn AboutPage() -> impl IntoView {
                                 <span class="flex h-11 w-11 items-center justify-center rounded-2xl bg-blue-50 text-blue-700">
                                     <Icon name=s.icon class="h-5 w-5" />
                                 </span>
-                                <span class="text-3xl font-extrabold tracking-tight text-slate-900">
+                                <span class="text-3xl font-bold tracking-tight text-ink">
                                     {move || match stats.get().and_then(Result::ok) {
                                         Some(live) => s.value_from(&live),
                                         None => "—".to_string(),
@@ -95,7 +95,7 @@ pub fn AboutPage() -> impl IntoView {
                                 <Icon name=v.icon class="h-5 w-5" />
                             </span>
                             <div>
-                                <h3 class="text-base font-bold text-slate-900">{v.title}</h3>
+                                <h3 class="text-base font-bold text-ink">{v.title}</h3>
                                 <p class="mt-1.5 text-sm leading-relaxed text-slate-600">{v.body}</p>
                             </div>
                         </div>
@@ -122,7 +122,7 @@ pub fn AboutPage() -> impl IntoView {
                                     <span class="h-1.5 w-1.5 rounded-full bg-white"></span>
                                 </span>
                                 <span class="inline-flex rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-bold text-blue-700">{*year}</span>
-                                <h3 class="mt-1.5 text-base font-bold text-slate-900">{*title}</h3>
+                                <h3 class="mt-1.5 text-base font-bold text-ink">{*title}</h3>
                                 <p class="mt-1 text-sm leading-relaxed text-slate-600">{*body}</p>
                             </div>
                         }
@@ -146,7 +146,7 @@ pub fn AboutPage() -> impl IntoView {
                                 <Icon name=step.icon class="h-5 w-5" />
                             </span>
                             <p class="mt-3 text-xs font-bold text-blue-700">{step.number}</p>
-                            <h3 class="text-base font-bold text-slate-900">{step.title}</h3>
+                            <h3 class="text-base font-bold text-ink">{step.title}</h3>
                             <p class="mt-1 text-sm leading-relaxed text-slate-600">{step.body}</p>
                         </div>
                     }
@@ -165,7 +165,7 @@ pub fn AboutPage() -> impl IntoView {
                         <Icon name="building" class="h-3.5 w-3.5" />
                         "For hoteliers"
                     </span>
-                    <h2 class="mt-3 text-2xl font-extrabold tracking-tight text-slate-900">"Run a hotel? List it here"</h2>
+                    <h2 class="mt-3 text-2xl font-bold tracking-tight text-ink">"Run a hotel? List it here"</h2>
                     <p class="mt-2 text-sm leading-relaxed text-slate-600">
                         "You keep full control of rooms, rates and availability through the Tourista dashboard, and you keep the whole rate — we take no commission from the guest and none from you. Onboarding usually takes a couple of days including verification."
                     </p>

@@ -40,7 +40,7 @@ pub fn FaqPage() -> impl IntoView {
                 <span class="mx-auto flex h-14 w-14 animate-scale-in items-center justify-center rounded-2xl bg-blue-700 text-white shadow-xl shadow-blue-700/25">
                     <Icon name="help-circle" class="h-6 w-6" />
                 </span>
-                <h1 class="mt-5 animate-fade-up text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl" style="animation-delay: 70ms">
+                <h1 class="mt-5 animate-fade-up text-3xl font-bold tracking-tight text-ink sm:text-4xl" style="animation-delay: 70ms">
                     "How can we help?"
                 </h1>
                 <p class="mt-3 animate-fade-up text-sm leading-relaxed text-slate-600" style="animation-delay: 120ms">
@@ -138,7 +138,7 @@ pub fn FaqPage() -> impl IntoView {
                                 <span class="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50 text-blue-700 transition-colors duration-300 group-hover:bg-blue-700 group-hover:text-white">
                                     <Icon name=icon class="h-5 w-5" />
                                 </span>
-                                <h3 class="mt-1 text-sm font-bold text-slate-900">{title}</h3>
+                                <h3 class="mt-1 text-sm font-bold text-ink">{title}</h3>
                                 <p class="text-xs leading-relaxed text-slate-500">{body}</p>
                             </div>
                         </A>

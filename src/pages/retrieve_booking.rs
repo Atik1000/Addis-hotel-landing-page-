@@ -128,7 +128,7 @@ pub fn RetrieveBookingPage() -> impl IntoView {
                     <span class="mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-700">
                         <Icon name="key" class="h-6 w-6" />
                     </span>
-                    <h1 class="text-xl font-bold text-slate-900">"Find your booking"</h1>
+                    <h1 class="text-xl font-bold text-ink">"Find your booking"</h1>
                     <p class="mt-1 text-sm text-slate-500">
                         "No account needed. We'll send a one-time code to the contact details on the reservation."
                     </p>
@@ -190,7 +190,7 @@ pub fn RetrieveBookingPage() -> impl IntoView {
                     <form on:submit=verify class="mt-5 flex flex-col gap-4">
                         <p class="text-sm text-slate-600">
                             "We sent a six-digit code for "
-                            <span class="font-bold text-slate-900">{move || reference.get()}</span>
+                            <span class="font-bold text-ink">{move || reference.get()}</span>
                             ". Enter it below."
                         </p>
                         <div>

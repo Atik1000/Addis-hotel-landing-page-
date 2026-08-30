@@ -75,7 +75,7 @@ pub fn Footer() -> impl IntoView {
                                 <Icon name="gift" class="h-3.5 w-3.5" />
                                 "Members save more"
                             </span>
-                            <h2 class="mt-3 text-2xl font-extrabold tracking-tight">"Get regional hotel deals first"</h2>
+                            <h2 class="mt-3 text-2xl font-bold tracking-tight">"Get regional hotel deals first"</h2>
                             <p class="mt-1.5 text-sm leading-relaxed text-blue-100">
                                 "One email a month with the best verified rates across Ethiopia, Kenya, Somalia, Somaliland and Djibouti. No spam, unsubscribe any time."
                             </p>
@@ -118,7 +118,7 @@ pub fn Footer() -> impl IntoView {
                                 <Icon name="building" class="h-5 w-5" />
                             </span>
                             <span class="leading-tight">
-                                <span class="block text-base font-extrabold text-slate-900">"Horn of Africa"</span>
+                                <span class="block text-base font-bold text-ink">"Horn of Africa"</span>
                                 <span class="block text-[10px] font-semibold tracking-[0.16em] text-blue-700">"HOTEL PORTAL"</span>
                             </span>
                         </A>

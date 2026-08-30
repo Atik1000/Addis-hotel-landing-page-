@@ -54,7 +54,7 @@ pub fn ContactPage() -> impl IntoView {
                 <span class="mx-auto flex h-14 w-14 animate-scale-in items-center justify-center rounded-2xl bg-blue-700 text-white shadow-xl shadow-blue-700/25">
                     <Icon name="headset" class="h-6 w-6" />
                 </span>
-                <h1 class="mt-5 animate-fade-up text-3xl font-extrabold tracking-tight text-slate-900 sm:text-4xl" style="animation-delay: 70ms">
+                <h1 class="mt-5 animate-fade-up text-3xl font-bold tracking-tight text-ink sm:text-4xl" style="animation-delay: 70ms">
                     "Talk to us"
                 </h1>
                 <p class="mx-auto mt-3 max-w-lg animate-fade-up text-sm leading-relaxed text-slate-600" style="animation-delay: 120ms">
@@ -70,7 +70,7 @@ pub fn ContactPage() -> impl IntoView {
                     when=move || sent.get()
                     fallback=move || view! {
                         <div class="animate-fade-up rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-                            <h2 class="text-lg font-bold text-slate-900">"Send us a message"</h2>
+                            <h2 class="text-lg font-bold text-ink">"Send us a message"</h2>
                             <p class="mt-1 text-sm text-slate-500">"Fields marked with * are required."</p>
 
                             <Show when=move || !errors.get().is_empty()>
@@ -176,7 +176,7 @@ pub fn ContactPage() -> impl IntoView {
                                 <Icon name="check" class="h-7 w-7" />
                             </span>
                         </span>
-                        <h2 class="mt-2 text-xl font-extrabold text-slate-900">"Message sent"</h2>
+                        <h2 class="mt-2 text-xl font-bold text-ink">"Message sent"</h2>
                         <p class="max-w-sm text-sm leading-relaxed text-slate-600">
                             {move || format!(
                                 "Thanks {}. We've got your message about \"{}\" and will reply to {} shortly.",
@@ -208,7 +208,7 @@ pub fn ContactPage() -> impl IntoView {
             // ---- Sidebar ------------------------------------------------
             <aside class="flex flex-col gap-4">
                 <div class="animate-slide-in-right rounded-2xl border border-slate-200 bg-white p-5">
-                    <h2 class="text-sm font-bold text-slate-900">"Other ways to reach us"</h2>
+                    <h2 class="text-sm font-bold text-ink">"Other ways to reach us"</h2>
                     <div class="mt-3.5 flex flex-col gap-2.5">
                         <a
                             href="mailto:support@hornofafrica-hotels.com"
@@ -252,7 +252,7 @@ pub fn ContactPage() -> impl IntoView {
                 </div>
 
                 <div class="animate-slide-in-right rounded-2xl border border-slate-200 bg-white p-5" style="animation-delay: 80ms">
-                    <h2 class="flex items-center gap-2 text-sm font-bold text-slate-900">
+                    <h2 class="flex items-center gap-2 text-sm font-bold text-ink">
                         <Icon name="clock" class="h-4 w-4 text-blue-700" />
                         "Support hours"
                     </h2>

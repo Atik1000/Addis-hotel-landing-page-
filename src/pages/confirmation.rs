@@ -51,7 +51,7 @@ pub fn ConfirmationPage() -> impl IntoView {
                     </span>
                 </div>
 
-                <h1 class="animate-fade-up text-3xl font-extrabold tracking-tight text-slate-900" style="animation-delay: 120ms">
+                <h1 class="animate-fade-up text-3xl font-bold tracking-tight text-ink" style="animation-delay: 120ms">
                     "Reservation submitted"
                 </h1>
                 <p class="mt-2 max-w-md animate-fade-up text-sm leading-relaxed text-slate-500" style="animation-delay: 170ms">
@@ -63,7 +63,7 @@ pub fn ConfirmationPage() -> impl IntoView {
             <div class="relative mt-7 animate-fade-up overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-lg shadow-slate-900/5" style="animation-delay: 220ms">
                 <div class="bg-gradient-to-br from-blue-700 via-blue-800 to-indigo-900 px-6 py-7 text-center text-white">
                     <p class="text-xs font-semibold uppercase tracking-[0.2em] text-blue-200">"Booking reference"</p>
-                    <p class="mt-2 break-all text-4xl font-extrabold tracking-[0.14em] tabular-nums">{reference}</p>
+                    <p class="mt-2 break-all text-4xl font-bold tracking-[0.14em] tabular-nums">{reference}</p>
                     <CopyButton reference=Signal::derive(reference) />
                 </div>
 
@@ -100,7 +100,7 @@ pub fn ConfirmationPage() -> impl IntoView {
 
             // ---- Next steps -------------------------------------------
             <div class="mt-6 animate-fade-up rounded-2xl border border-slate-200 bg-white p-5" style="animation-delay: 280ms">
-                <h2 class="text-sm font-bold text-slate-900">"What happens next"</h2>
+                <h2 class="text-sm font-bold text-ink">"What happens next"</h2>
                 <ol class="mt-3 flex flex-col gap-3">
                     <Step n="1" title="The hotel confirms" body="You will hear from the property directly if anything needs checking." />
                     <Step n="2" title="Keep your reference" body="It is how you retrieve the booking and how the front desk finds you." />
@@ -169,13 +169,13 @@ fn BookingDetails(
                                 <img src=src alt=name.clone() class="h-20 w-20 shrink-0 rounded-xl object-cover" />
                             }.into_any(),
                             None => view! {
-                                <div class="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 text-2xl font-extrabold text-white">
+                                <div class="flex h-20 w-20 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-600 to-indigo-700 text-2xl font-bold text-white">
                                     {name.chars().next().unwrap_or('H').to_uppercase().to_string()}
                                 </div>
                             }.into_any(),
                         }}
                         <div class="min-w-0">
-                            <p class="text-base font-bold text-slate-900">{name.clone()}</p>
+                            <p class="text-base font-bold text-ink">{name.clone()}</p>
                             <Show when={ let l = location.clone(); move || !l.is_empty() }>
                                 <p class="flex items-center gap-1 text-xs text-slate-500">
                                     <Icon name="map-pin" class="h-3 w-3" />
@@ -219,7 +219,7 @@ fn BookingDetails(
                                 "Payable at the hotel · taxes added at checkout"
                             </span>
                         </span>
-                        <span class="text-xl font-extrabold tabular-nums text-slate-900">
+                        <span class="text-xl font-bold tabular-nums text-ink">
                             {format!("{currency} {}", money_round(subtotal))}
                         </span>
                     </div>

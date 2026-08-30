@@ -5,41 +5,34 @@
 //! arrives separately, summarised from the room feed by
 //! [`crate::api::hotel_from_prices`], and is passed in rather than fetched per
 //! card.
+//!
+//! In practice the logo is empty on every record, so the cover falls back to
+//! [`crate::images::hotel_cover`] rather than rendering a letter tile.
 
 use crate::api::{money_round, HotelSummary};
 use crate::components::{FavoriteButton, Icon, Stars};
+use crate::images::hotel_cover;
 use leptos::prelude::*;
 use leptos_router::components::A;
 
-/// Neutral placeholder for a hotel with no logo set.
+/// Cover photograph. Uses the hotel's own logo when it has uploaded one and a
+/// stable stand-in otherwise, so no card ever renders as a bare initial.
 #[component]
-fn LogoOrFallback(hotel: HotelSummary, #[prop(into)] class: String) -> impl IntoView {
-    let initial = hotel
-        .name
-        .chars()
-        .next()
-        .map(|c| c.to_uppercase().to_string())
-        .unwrap_or_else(|| "?".into());
-
+fn HotelCover(
+    hotel: HotelSummary,
+    #[prop(into)] class: String,
+    /// Delivery width to request, matched to the slot the image fills.
+    #[prop(default = 800)]
+    width: u32,
+) -> impl IntoView {
+    let src = hotel_cover(hotel.id, hotel.logo.as_deref(), width);
     view! {
-        {match hotel.logo.as_deref().filter(|s| !s.trim().is_empty()) {
-            Some(src) => view! {
-                <img
-                    src=src.to_string()
-                    alt=hotel.name.clone()
-                    loading="lazy"
-                    class=format!("{class} object-cover")
-                />
-            }.into_any(),
-            None => view! {
-                <div class=format!(
-                    "{class} flex items-center justify-center bg-gradient-to-br \
-                     from-blue-600 to-indigo-700 text-2xl font-extrabold text-white"
-                )>
-                    {initial}
-                </div>
-            }.into_any(),
-        }}
+        <img
+            src=src
+            alt=hotel.name.clone()
+            loading="lazy"
+            class=format!("{class} object-cover transition-transform duration-700 group-hover:scale-105")
+        />
     }
 }
 
@@ -67,7 +60,7 @@ pub fn HotelApiCard(
     view! {
         <article class="card-hover group flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white sm:flex-row">
             <div class="relative h-44 w-full shrink-0 overflow-hidden sm:h-auto sm:w-56">
-                <LogoOrFallback hotel=hotel.clone() class="h-full w-full" />
+                <HotelCover hotel=hotel.clone() class="h-full w-full" width=600 />
                 <div class="absolute right-2 top-2">
                     <FavoriteButton />
                 </div>
@@ -84,7 +77,7 @@ pub fn HotelApiCard(
                         </div>
                     </Show>
 
-                    <h3 class="mt-0.5 text-lg font-bold text-slate-900">{hotel.name.clone()}</h3>
+                    <h3 class="mt-0.5 text-lg font-bold text-ink">{hotel.name.clone()}</h3>
 
                     <Show when={
                         let l = location.clone();
@@ -106,7 +99,7 @@ pub fn HotelApiCard(
                         Some(p) => view! {
                             <div class="sm:text-right">
                                 <p class="text-[11px] text-slate-400">"from"</p>
-                                <p class="text-xl font-extrabold text-slate-900">
+                                <p class="text-xl font-bold text-ink">
                                     {format!("{currency} {}", money_round(p))}
                                 </p>
                                 <p class="text-[11px] text-slate-400">"per night"</p>
@@ -144,16 +137,16 @@ pub fn HotelApiCardCompact(
     view! {
         <A href=href attr:class="card-hover group flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white">
             <div class="relative h-36 w-full overflow-hidden">
-                <LogoOrFallback hotel=hotel.clone() class="h-full w-full" />
+                <HotelCover hotel=hotel.clone() class="h-full w-full" width=500 />
             </div>
             <div class="flex flex-1 flex-col p-3">
                 <Show when=move || (stars > 0.0)>
                     <Stars rating=stars class="h-3 w-3" />
                 </Show>
-                <h3 class="mt-1 truncate text-sm font-bold text-slate-900">{hotel.name.clone()}</h3>
+                <h3 class="mt-1 truncate text-sm font-bold text-ink">{hotel.name.clone()}</h3>
                 <p class="mt-0.5 truncate text-xs text-slate-500">{location}</p>
                 {from_price.map(|p| view! {
-                    <p class="mt-1.5 text-sm font-extrabold text-slate-900">
+                    <p class="mt-1.5 text-sm font-bold text-ink">
                         {format!("{currency} {}", money_round(p))}
                         <span class="text-[11px] font-medium text-slate-400">" / night"</span>
                     </p>

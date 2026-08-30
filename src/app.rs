@@ -50,6 +50,7 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/") view=HomePage/>
                         <Route path=path!("/hotels") view=ListingsPage/>
                         <Route path=path!("/hotels/:id") view=HotelDetailsPage/>
+                        <Route path=path!("/hotels/:id/rooms/:room_id") view=RoomDetailsPage/>
                         <Route path=path!("/hotels/:id/reserve/:room_id") view=ReservationFormPage/>
                         <Route path=path!("/confirmation/:booking_ref") view=ConfirmationPage/>
                         <Route path=path!("/my-reservations") view=MyReservationsPage/>

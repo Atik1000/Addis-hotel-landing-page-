@@ -61,7 +61,7 @@ pub fn HowItWorksPage() -> impl IntoView {
                     <Icon name="sparkles" class="h-3.5 w-3.5" />
                     "Under a minute, start to finish"
                 </span>
-                <h1 class="mt-5 animate-fade-up text-4xl font-extrabold tracking-tight text-slate-900 sm:text-5xl" style="animation-delay: 80ms">
+                <h1 class="mt-5 animate-fade-up text-4xl font-bold tracking-tight text-ink sm:text-5xl" style="animation-delay: 80ms">
                     "How booking here works"
                 </h1>
                 <p class="mx-auto mt-4 max-w-xl animate-fade-up text-base leading-relaxed text-slate-600" style="animation-delay: 130ms">
@@ -80,11 +80,11 @@ pub fn HowItWorksPage() -> impl IntoView {
                             <div class="reveal group relative flex flex-col items-center text-center" style=delay>
                                 <span class="relative z-10 flex h-[4.5rem] w-[4.5rem] items-center justify-center rounded-2xl border border-blue-100 bg-white text-blue-700 shadow-md transition-all duration-300 group-hover:-translate-y-1.5 group-hover:bg-blue-700 group-hover:text-white group-hover:shadow-xl">
                                     <Icon name=step.icon class="h-7 w-7" />
-                                    <span class="absolute -right-2 -top-2 flex h-7 w-7 items-center justify-center rounded-full bg-blue-700 text-[11px] font-extrabold text-white ring-4 ring-slate-50 group-hover:bg-slate-900">
+                                    <span class="absolute -right-2 -top-2 flex h-7 w-7 items-center justify-center rounded-full bg-blue-700 text-[11px] font-bold text-white ring-4 ring-slate-50 group-hover:bg-slate-900">
                                         {step.number}
                                     </span>
                                 </span>
-                                <h2 class="mt-4 text-base font-bold text-slate-900">{step.title}</h2>
+                                <h2 class="mt-4 text-base font-bold text-ink">{step.title}</h2>
                                 <p class="mt-1.5 text-sm leading-relaxed text-slate-500">{step.body}</p>
                             </div>
                         }
@@ -100,11 +100,11 @@ pub fn HowItWorksPage() -> impl IntoView {
                         let delay = format!("animation-delay: {}ms", (i % 2) * 80);
                         view! {
                             <div class="reveal grid gap-5 sm:grid-cols-[auto_minmax(0,1fr)]" style=delay>
-                                <span class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-700 text-lg font-extrabold text-white shadow-lg shadow-blue-700/25">
+                                <span class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-700 text-lg font-bold text-white shadow-lg shadow-blue-700/25">
                                     {i + 1}
                                 </span>
                                 <div>
-                                    <h2 class="text-xl font-extrabold tracking-tight text-slate-900">{*title}</h2>
+                                    <h2 class="text-xl font-bold tracking-tight text-ink">{*title}</h2>
                                     <p class="mt-1 text-sm font-medium text-blue-700">{*lede}</p>
                                     <ul class="mt-3 flex flex-col gap-2">
                                         {points.iter().map(|p| view! {
@@ -152,13 +152,13 @@ pub fn HowItWorksPage() -> impl IntoView {
         <section class="mx-auto max-w-4xl px-4 py-14">
             <div class="reveal flex flex-col items-center gap-3 rounded-3xl bg-gradient-to-br from-blue-700 to-indigo-800 px-8 py-12 text-center text-white shadow-xl shadow-blue-900/25">
                 <Icon name="search" class="h-9 w-9 animate-float" />
-                <h2 class="text-2xl font-extrabold tracking-tight">"Ready to try it?"</h2>
+                <h2 class="text-2xl font-bold tracking-tight">"Ready to try it?"</h2>
                 <p class="max-w-md text-sm leading-relaxed text-blue-100">
                     "Pick a city, choose a room and reserve. You will have a booking reference before you finish reading this page."
                 </p>
                 <A
                     href="/hotels"
-                    attr:class="sheen mt-3 flex items-center gap-2 rounded-xl bg-white px-7 py-3.5 text-sm font-bold text-slate-900 shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl active:scale-[0.98]"
+                    attr:class="sheen mt-3 flex items-center gap-2 rounded-xl bg-white px-7 py-3.5 text-sm font-bold text-ink shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl active:scale-[0.98]"
                 >
                     "Browse hotels"
                     <Icon name="arrow-right" class="h-4 w-4" />

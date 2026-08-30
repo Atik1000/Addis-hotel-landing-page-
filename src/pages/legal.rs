@@ -182,7 +182,7 @@ fn LegalDocument(
                         <Icon name=icon class="h-5 w-5" />
                     </span>
                     <div>
-                        <h1 class="text-3xl font-extrabold tracking-tight text-slate-900">{title}</h1>
+                        <h1 class="text-3xl font-bold tracking-tight text-ink">{title}</h1>
                         <p class="mt-1.5 max-w-xl text-sm leading-relaxed text-slate-600">{lede}</p>
                         <p class="mt-2 flex items-center gap-1.5 text-xs text-slate-400">
                             <Icon name="clock" class="h-3.5 w-3.5" />
@@ -201,7 +201,7 @@ fn LegalDocument(
                         let delay = format!("animation-delay: {}ms", (i % 4) * 50);
                         view! {
                             <section id=anchor class="reveal scroll-mt-24" style=delay>
-                                <h2 class="text-lg font-extrabold tracking-tight text-slate-900">{s.heading}</h2>
+                                <h2 class="text-lg font-bold tracking-tight text-ink">{s.heading}</h2>
                                 <div class="mt-2.5 flex flex-col gap-3">
                                     {s.paragraphs.iter().map(|p| view! {
                                         <p class="text-sm leading-relaxed text-slate-600">{*p}</p>

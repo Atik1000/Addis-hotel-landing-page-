@@ -14,6 +14,7 @@ use crate::api::{
     RoomSummary,
 };
 use crate::components::{pluralize, Breadcrumbs, Disclosure, Gallery, Icon, Stars};
+use crate::images::{hotel_gallery, room_image};
 use leptos::prelude::*;
 use leptos_meta::Title;
 use leptos_router::components::A;
@@ -67,7 +68,9 @@ fn HotelBody(
     let location = h.location();
     let city_line = h.city_line();
     let policies = h.policies.clone().unwrap_or_default();
-    let gallery = h.gallery();
+    // Falls back to curated photography — every hotel in the feed currently
+    // has an empty photo list, and a monogram reads as a broken page.
+    let gallery = hotel_gallery(h.id, h.gallery());
     let contacts = h.contacts.clone();
     let amenities = h.amenities.clone();
 
@@ -113,17 +116,7 @@ fn HotelBody(
 
             // ---- Gallery -------------------------------------------------
             <div class="animate-fade-up" style="animation-delay: 60ms">
-                {if gallery.is_empty() {
-                    // No photos uploaded — a monogram beats a stock photo of
-                    // somebody else's hotel.
-                    view! {
-                        <div class="flex h-56 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-700 sm:h-72">
-                            <span class="text-6xl font-extrabold text-white/90">{h.initial()}</span>
-                        </div>
-                    }.into_any()
-                } else {
-                    view! { <Gallery photos=gallery alt=name.clone() /> }.into_any()
-                }}
+                <Gallery photos=gallery alt=name.clone() />
             </div>
 
             <div class="mt-7 grid gap-8 lg:grid-cols-[minmax(0,1fr)_21rem]">
@@ -145,7 +138,7 @@ fn HotelBody(
                             </span>
                         </div>
 
-                        <h1 class="mt-2 text-3xl font-extrabold tracking-tight text-slate-900">{name.clone()}</h1>
+                        <h1 class="mt-2 text-3xl font-bold tracking-tight text-ink">{name.clone()}</h1>
 
                         <p class="mt-1.5 flex flex-wrap items-center gap-1.5 text-sm text-slate-500">
                             <Icon name="map-pin" class="h-4 w-4 shrink-0 text-blue-700" />
@@ -195,7 +188,7 @@ fn HotelBody(
                     // ---- About ------------------------------------------
                     <Show when=move || has_description>
                         <section class="mt-8">
-                            <h2 class="text-lg font-bold text-slate-900">"About this hotel"</h2>
+                            <h2 class="text-lg font-bold text-ink">"About this hotel"</h2>
                             <p class=move || format!(
                                 "mt-2 text-sm leading-relaxed text-slate-600 transition-all {}",
                                 if description_expanded.get() { "" } else { "line-clamp-4" }
@@ -219,7 +212,7 @@ fn HotelBody(
                         move || n > 0
                     }>
                         <section class="mt-8">
-                            <h2 class="text-lg font-bold text-slate-900">"Amenities"</h2>
+                            <h2 class="text-lg font-bold text-ink">"Amenities"</h2>
                             <p class="mt-1 text-sm text-slate-500">"What this property offers its guests."</p>
                             <div class="mt-3 flex flex-wrap gap-2">
                                 {
@@ -251,7 +244,7 @@ fn HotelBody(
 
                     // ---- Rooms -------------------------------------------
                     <section class="mt-9" id="rooms">
-                        <h2 class="text-lg font-bold text-slate-900">"Choose your room"</h2>
+                        <h2 class="text-lg font-bold text-ink">"Choose your room"</h2>
                         <p class="mt-1 text-sm text-slate-500">
                             "All rates are per room per night and paid at the hotel."
                         </p>
@@ -290,7 +283,7 @@ fn HotelBody(
 
                     // ---- Reviews -----------------------------------------
                     <section class="mt-10">
-                        <h2 class="text-lg font-bold text-slate-900">"Guest reviews"</h2>
+                        <h2 class="text-lg font-bold text-ink">"Guest reviews"</h2>
                         <Suspense fallback=|| view! {
                             <div class="skeleton mt-4 h-32 rounded-2xl"></div>
                         }>
@@ -308,7 +301,7 @@ fn HotelBody(
                                 view! {
                                     <div class="mt-4 grid gap-6 rounded-2xl border border-slate-200 bg-white p-5 sm:grid-cols-[auto_minmax(0,1fr)]">
                                         <div class="flex flex-col items-center justify-center gap-1 border-slate-100 sm:border-r sm:pr-6">
-                                            <span class="text-4xl font-extrabold tracking-tight text-slate-900">
+                                            <span class="text-4xl font-bold tracking-tight text-ink">
                                                 {format!("{:.1}", r.average)}
                                             </span>
                                             <Stars rating=r.average class="h-4 w-4" />
@@ -342,7 +335,7 @@ fn HotelBody(
                                                         </span>
                                                         <div class="min-w-0 flex-1">
                                                             <div class="flex flex-wrap items-center gap-2">
-                                                                <span class="font-semibold text-slate-900">{rev.guest_name.clone()}</span>
+                                                                <span class="font-semibold text-ink">{rev.guest_name.clone()}</span>
                                                                 <Stars rating=rev.rate as f32 class="h-3 w-3" />
                                                                 <span class="text-xs text-slate-400">
                                                                     {crate::api::pretty_date(rev.created_at.as_deref())}
@@ -392,7 +385,7 @@ fn HotelBody(
 
                     // ---- Policies ----------------------------------------
                     <section class="mt-10">
-                        <h2 class="text-lg font-bold text-slate-900">"Hotel policies"</h2>
+                        <h2 class="text-lg font-bold text-ink">"Hotel policies"</h2>
                         <div class="mt-3 divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white">
                             <Disclosure title="Check-in and check-out" start_open=true>
                                 <ul class="flex flex-col gap-2 text-sm text-slate-600">
@@ -460,7 +453,7 @@ fn HotelBody(
                                     Some(r) => view! {
                                         <div>
                                             <p class="text-xs uppercase tracking-wide text-slate-400">"From"</p>
-                                            <p class="text-3xl font-extrabold tracking-tight text-slate-900">
+                                            <p class="text-3xl font-bold tracking-tight text-ink">
                                                 {format!("ETB {}", money_round(r.price()))}
                                             </p>
                                             <p class="text-xs text-slate-400">"per night, taxes calculated at booking"</p>
@@ -503,7 +496,7 @@ fn HotelBody(
                         move || has
                     }>
                         <div class="mt-4 rounded-2xl border border-slate-200 bg-white p-5">
-                            <h3 class="text-sm font-bold text-slate-900">"Contact the property"</h3>
+                            <h3 class="text-sm font-bold text-ink">"Contact the property"</h3>
                             <ul class="mt-2 flex flex-col gap-2 text-sm text-slate-600">
                                 {h.phone_number.clone().filter(|p| !p.is_empty()).map(|p| {
                                     let href = format!("tel:{p}");
@@ -559,28 +552,27 @@ fn HotelBody(
 #[component]
 fn RoomRow(room: RoomSummary, hotel_id: i64, currency: String, index: usize) -> impl IntoView {
     let delay = format!("animation-delay: {}ms", index * 70);
-    let image = room.primary_image.clone().filter(|u| u.starts_with("http"));
+    let image = room_image(
+        room.id,
+        room.primary_image.as_deref(),
+        room.room_type.as_deref(),
+        500,
+    );
     let was = room.was_price();
     let price = room.price();
     let beds = room.bed_summary();
     let amenities: Vec<String> = room.amenities.iter().take(4).map(|a| a.name.clone()).collect();
     let href = format!("/hotels/{hotel_id}/reserve/{}", room.id);
+    let detail_href = format!("/hotels/{hotel_id}/rooms/{}", room.id);
     let discount = room.discount_percent_per_night.unwrap_or(0);
 
     view! {
         <article class="reveal card-hover flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white sm:flex-row" style=delay>
             <div class="relative h-44 w-full shrink-0 overflow-hidden sm:h-auto sm:w-56">
-                {match image {
-                    Some(src) => view! {
-                        <img src=src alt=room.name.clone() loading="lazy"
-                            class="h-full w-full object-cover transition-transform duration-700 hover:scale-105" />
-                    }.into_any(),
-                    None => view! {
-                        <div class="flex h-full w-full items-center justify-center bg-slate-100 text-slate-300">
-                            <Icon name="bed" class="h-10 w-10" />
-                        </div>
-                    }.into_any(),
-                }}
+                <a href=detail_href.clone() class="block h-full w-full">
+                    <img src=image alt=room.name.clone() loading="lazy"
+                        class="h-full w-full object-cover transition-transform duration-700 hover:scale-105" />
+                </a>
                 <Show when=move || (discount > 0)>
                     <span class="absolute bottom-2 left-2 rounded-full bg-red-600 px-2.5 py-1 text-[11px] font-bold text-white shadow-md">
                         {format!("-{discount}%")}
@@ -590,7 +582,11 @@ fn RoomRow(room: RoomSummary, hotel_id: i64, currency: String, index: usize) -> 
 
             <div class="flex flex-1 flex-col gap-4 p-4 sm:flex-row">
                 <div class="min-w-0 flex-1">
-                    <h3 class="text-base font-bold text-slate-900">{room.name.clone()}</h3>
+                    <h3 class="text-base font-bold text-ink">
+                        <a href=detail_href.clone() class="transition-colors hover:text-blue-700">
+                            {room.name.clone()}
+                        </a>
+                    </h3>
                     <p class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
                         <span class="flex items-center gap-1">
                             <Icon name="bed" class="h-3.5 w-3.5" />
@@ -631,18 +627,26 @@ fn RoomRow(room: RoomSummary, hotel_id: i64, currency: String, index: usize) -> 
                         {was.map(|w| view! {
                             <p class="text-xs text-slate-400 line-through">{format!("{currency} {}", money_round(w))}</p>
                         })}
-                        <p class="text-xl font-extrabold text-slate-900">
+                        <p class="text-xl font-bold text-ink">
                             {format!("{currency} {}", money_round(price))}
                         </p>
                         <p class="text-xs text-slate-400">"per night"</p>
                     </div>
-                    <A
-                        href=href
-                        attr:class="sheen flex items-center justify-center gap-1.5 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-blue-700/20 transition-all duration-200 hover:bg-blue-800 hover:shadow-lg active:scale-[0.98] sm:w-full"
-                    >
-                        "Reserve"
-                        <Icon name="arrow-right" class="h-3.5 w-3.5" />
-                    </A>
+                    <div class="flex flex-col items-end gap-1.5 sm:w-full">
+                        <A
+                            href=href
+                            attr:class="sheen flex items-center justify-center gap-1.5 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-blue-700/20 transition-all duration-200 hover:bg-blue-800 hover:shadow-lg active:scale-[0.98] sm:w-full"
+                        >
+                            "Reserve"
+                            <Icon name="arrow-right" class="h-3.5 w-3.5" />
+                        </A>
+                        <A
+                            href=detail_href.clone()
+                            attr:class="text-xs font-bold text-blue-700 transition-colors hover:text-blue-800 hover:underline"
+                        >
+                            "View room details"
+                        </A>
+                    </div>
                 </div>
             </div>
         </article>
@@ -675,7 +679,7 @@ fn NotFound(#[prop(into)] message: String) -> impl IntoView {
             <span class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-400">
                 <Icon name="search" class="h-6 w-6" />
             </span>
-            <h1 class="text-xl font-bold text-slate-900">"Hotel not found"</h1>
+            <h1 class="text-xl font-bold text-ink">"Hotel not found"</h1>
             <p class="mt-2 text-sm text-slate-500">{message}</p>
             <A href="/hotels" attr:class="mt-5 inline-flex rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white hover:bg-blue-800">
                 "Browse all hotels"

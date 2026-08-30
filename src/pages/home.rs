@@ -5,6 +5,7 @@ use crate::api::{
     hotel_from_prices, list_cities, list_hotels, money_round, portal_stats, HotelQuery,
 };
 use crate::data::{FAQS, HOW_IT_WORKS, STATS, TESTIMONIALS};
+use crate::images::{city_image, hotel_cover};
 use leptos::prelude::*;
 use leptos_meta::Title;
 use leptos_router::components::A;
@@ -51,7 +52,7 @@ pub fn HomePage() -> impl IntoView {
                         }}
                     </span>
 
-                    <h1 class="mt-5 text-4xl font-extrabold leading-[1.08] tracking-tight sm:text-5xl lg:text-6xl">
+                    <h1 class="mt-5 text-4xl font-bold leading-[1.08] tracking-tight sm:text-5xl lg:text-6xl">
                         "Discover & reserve hotels across the "
                         <span class="animate-gradient-pan bg-gradient-to-r from-sky-300 via-cyan-200 to-blue-300 bg-clip-text text-transparent">
                             "Horn of Africa"
@@ -65,7 +66,7 @@ pub fn HomePage() -> impl IntoView {
                     <div class="mt-7 flex flex-wrap items-center gap-3">
                         <A
                             href="/hotels"
-                            attr:class="sheen flex items-center gap-2 rounded-xl bg-white px-6 py-3.5 text-sm font-bold text-slate-900 shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl active:scale-[0.98]"
+                            attr:class="sheen flex items-center gap-2 rounded-xl bg-white px-6 py-3.5 text-sm font-bold text-ink shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl active:scale-[0.98]"
                         >
                             <Icon name="search" class="h-4 w-4" />
                             "Browse all hotels"
@@ -110,7 +111,7 @@ pub fn HomePage() -> impl IntoView {
 
                         <div class="text-sm text-slate-300">
                             <p class="text-xs uppercase tracking-wide text-slate-400">"Rooms from"</p>
-                            <p class="text-xl font-extrabold text-white">
+                            <p class="text-xl font-bold text-white">
                                 // The lowest published nightly rate across every listed room.
                                 {move || match prices.get().and_then(Result::ok) {
                                     Some(list) if !list.is_empty() => {
@@ -178,23 +179,16 @@ pub fn HomePage() -> impl IntoView {
                             {list.into_iter().enumerate().map(|(i, c)| {
                                 let delay = format!("animation-delay: {}ms", i * 60);
                                 let href = format!("/hotels?city={}", c.city.replace(' ', "+"));
-                                let image = c.featured_image.clone().filter(|u| u.starts_with("http"));
+                                let image = city_image(&c.city, c.featured_image.as_deref(), 600);
                                 let from = c.min_price.as_deref().and_then(|p| p.parse::<f64>().ok());
                                 view! {
                                     <a href=href class="reveal group relative block h-40 overflow-hidden rounded-2xl shadow-sm transition-shadow duration-300 hover:shadow-xl" style=delay>
-                                        {match image {
-                                            Some(src) => view! {
-                                                <img
-                                                    src=src
-                                                    alt=c.city.clone()
-                                                    loading="lazy"
-                                                    class="h-full w-full object-cover transition-transform duration-700 group-hover:scale-110"
-                                                />
-                                            }.into_any(),
-                                            None => view! {
-                                                <span class="block h-full w-full bg-gradient-to-br from-blue-700 to-indigo-900"></span>
-                                            }.into_any(),
-                                        }}
+                                        <img
+                                            src=image
+                                            alt=c.city.clone()
+                                            loading="lazy"
+                                            class="h-full w-full object-cover transition-transform duration-700 group-hover:scale-110"
+                                        />
                                         <span class="absolute inset-0 bg-gradient-to-t from-slate-950/85 via-slate-950/25 to-transparent transition-opacity duration-300 group-hover:from-blue-950/85"></span>
                                         <span class="absolute inset-x-3 bottom-3 text-left text-white transition-transform duration-300 group-hover:-translate-y-1">
                                             <span class="block text-sm font-bold">{c.city.clone()}</span>
@@ -286,11 +280,11 @@ pub fn HomePage() -> impl IntoView {
                             <div class="reveal group relative flex flex-col items-center text-center" style=delay>
                                 <span class="relative z-10 flex h-[4.5rem] w-[4.5rem] items-center justify-center rounded-2xl border border-blue-100 bg-white text-blue-700 shadow-md shadow-blue-900/5 transition-all duration-300 group-hover:-translate-y-1.5 group-hover:border-blue-300 group-hover:bg-blue-700 group-hover:text-white group-hover:shadow-xl">
                                     <Icon name=step.icon class="h-7 w-7" />
-                                    <span class="absolute -right-2 -top-2 flex h-7 w-7 items-center justify-center rounded-full bg-blue-700 text-[11px] font-extrabold text-white ring-4 ring-slate-50 transition-colors duration-300 group-hover:bg-slate-900">
+                                    <span class="absolute -right-2 -top-2 flex h-7 w-7 items-center justify-center rounded-full bg-blue-700 text-[11px] font-bold text-white ring-4 ring-slate-50 transition-colors duration-300 group-hover:bg-slate-900">
                                         {step.number}
                                     </span>
                                 </span>
-                                <h3 class="mt-4 text-base font-bold text-slate-900">{step.title}</h3>
+                                <h3 class="mt-4 text-base font-bold text-ink">{step.title}</h3>
                                 <p class="mt-1.5 text-sm leading-relaxed text-slate-500">{step.body}</p>
                             </div>
                         }
@@ -317,7 +311,7 @@ pub fn HomePage() -> impl IntoView {
                                 <span class="flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10 text-sky-300 ring-1 ring-white/15 transition-all duration-300 group-hover:scale-110 group-hover:bg-white/15">
                                     <Icon name=s.icon class="h-5 w-5" />
                                 </span>
-                                <span class="text-3xl font-extrabold tracking-tight sm:text-4xl">
+                                <span class="text-3xl font-bold tracking-tight sm:text-4xl">
                                     {move || match stats.get().and_then(Result::ok) {
                                         Some(live) => s.value_from(&live),
                                         None => "—".to_string(),
@@ -361,7 +355,7 @@ pub fn HomePage() -> impl IntoView {
                                     t.avatar_tint
                                 )>{t.initials}</span>
                                 <span class="min-w-0">
-                                    <span class="block truncate text-sm font-bold text-slate-900">{t.name}</span>
+                                    <span class="block truncate text-sm font-bold text-ink">{t.name}</span>
                                     <span class="block truncate text-xs text-slate-400">{t.role}</span>
                                 </span>
                             </figcaption>
@@ -414,7 +408,7 @@ pub fn HomePage() -> impl IntoView {
                     <Icon name="plane" class="h-6 w-6 text-sky-300" />
                 </span>
 
-                <h2 class="relative mt-5 text-3xl font-extrabold tracking-tight sm:text-4xl">
+                <h2 class="relative mt-5 text-3xl font-bold tracking-tight sm:text-4xl">
                     "Your next stay is a minute away"
                 </h2>
                 <p class="relative mx-auto mt-3 max-w-xl text-sm leading-relaxed text-blue-100 sm:text-base">
@@ -424,7 +418,7 @@ pub fn HomePage() -> impl IntoView {
                 <div class="relative mt-7 flex flex-wrap items-center justify-center gap-3">
                     <A
                         href="/hotels"
-                        attr:class="sheen flex items-center gap-2 rounded-xl bg-white px-7 py-3.5 text-sm font-bold text-slate-900 shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl active:scale-[0.98]"
+                        attr:class="sheen flex items-center gap-2 rounded-xl bg-white px-7 py-3.5 text-sm font-bold text-ink shadow-xl transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl active:scale-[0.98]"
                     >
                         <Icon name="search" class="h-4 w-4" />
                         "Start searching"
@@ -444,9 +438,9 @@ pub fn HomePage() -> impl IntoView {
 
 /// Compact hotel tile for the featured rail.
 ///
-/// `GET /organizations/public/` carries no photo or price, so the tile leans on
-/// the hotel's logo (or a monogram) and takes its "from" price from the room
-/// feed that [`hotel_from_prices`] summarises.
+/// `GET /organizations/public/` carries no photo or price, so the tile takes a
+/// cover from [`hotel_cover`] and its "from" price from the room feed that
+/// [`hotel_from_prices`] summarises.
 #[component]
 fn FeaturedHotelCard(
     hotel: crate::api::HotelSummary,
@@ -455,13 +449,7 @@ fn FeaturedHotelCard(
     let href = format!("/hotels/{}", hotel.id);
     let stars = hotel.stars();
     let location = hotel.location();
-    let logo = hotel.logo.clone().filter(|u| u.starts_with("http"));
-    let initial = hotel
-        .name
-        .chars()
-        .next()
-        .map(|c| c.to_uppercase().to_string())
-        .unwrap_or_else(|| "?".into());
+    let cover = hotel_cover(hotel.id, hotel.logo.as_deref(), 500);
     let blurb = hotel
         .description
         .clone()
@@ -471,24 +459,15 @@ fn FeaturedHotelCard(
     view! {
         <A href=href attr:class="card-hover group flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white">
             <div class="relative h-40 w-full overflow-hidden">
-                {match logo {
-                    Some(src) => view! {
-                        <img src=src alt=hotel.name.clone() loading="lazy"
-                            class="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" />
-                    }.into_any(),
-                    None => view! {
-                        <span class="flex h-full w-full items-center justify-center bg-gradient-to-br from-blue-600 to-indigo-700 text-4xl font-extrabold text-white">
-                            {initial}
-                        </span>
-                    }.into_any(),
-                }}
+                <img src=cover alt=hotel.name.clone() loading="lazy"
+                    class="h-full w-full object-cover transition-transform duration-700 group-hover:scale-105" />
             </div>
 
             <div class="flex flex-1 flex-col p-4">
                 <Show when=move || (stars > 0.0)>
                     <Stars rating=stars class="h-3 w-3" />
                 </Show>
-                <h3 class="mt-1 truncate text-base font-bold text-slate-900">{hotel.name.clone()}</h3>
+                <h3 class="mt-1 truncate text-base font-bold text-ink">{hotel.name.clone()}</h3>
                 <p class="mt-0.5 flex items-center gap-1 truncate text-xs text-slate-500">
                     <Icon name="map-pin" class="h-3 w-3 shrink-0" />
                     {location}
@@ -502,7 +481,7 @@ fn FeaturedHotelCard(
                         Some(p) => view! {
                             <span>
                                 <span class="block text-[11px] text-slate-400">"from"</span>
-                                <span class="block text-lg font-extrabold text-slate-900">
+                                <span class="block text-lg font-bold text-ink">
                                     {format!("ETB {}", money_round(p))}
                                 </span>
                             </span>

@@ -163,6 +163,9 @@ pub struct Amenity {
     pub id: i64,
     #[serde(default)]
     pub name: String,
+    /// `"Essentials"`, `"Services"`, … Absent on the amenity catalogue.
+    #[serde(default)]
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -184,6 +187,22 @@ pub struct Photo {
     pub caption: Option<String>,
     #[serde(default)]
     pub display_order: i32,
+}
+
+/// A stretch of nights a room is off the market, from a room's
+/// `unavailable_ranges`. Both dates are inclusive `YYYY-MM-DD`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RoomBlock {
+    #[serde(default)]
+    pub event_type: Option<String>,
+    #[serde(default)]
+    pub event_start_date: String,
+    #[serde(default)]
+    pub event_finished_date: String,
+    #[serde(default)]
+    pub is_active: bool,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 /// A room as it appears in `GET /rooms/public/`.
@@ -220,6 +239,18 @@ pub struct RoomSummary {
     pub photos: Vec<Photo>,
     #[serde(default)]
     pub primary_image: Option<String>,
+    // ---- detail-only, from `/rooms/public/{id}/` -------------------------
+    #[serde(default)]
+    pub floor: Option<i32>,
+    /// The room's own rules. Shares every field name with the property rules,
+    /// so it decodes into the same struct.
+    #[serde(default)]
+    pub policy: Option<HotelPolicies>,
+    /// The property rules, as a fallback for anything the room leaves unset.
+    #[serde(default)]
+    pub hotel_policy: Option<HotelPolicies>,
+    #[serde(default)]
+    pub unavailable_ranges: Vec<RoomBlock>,
 }
 
 impl RoomSummary {
@@ -251,6 +282,81 @@ impl RoomSummary {
             })
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    /// Total sleeping places, for the "sleeps N" line.
+    pub fn bed_count(&self) -> u32 {
+        self.beds.iter().map(|b| b.number_of_beds.unwrap_or(1)).sum()
+    }
+
+    /// Discount as a whole percentage, `None` when nothing is off.
+    pub fn discount(&self) -> Option<i32> {
+        self.discount_percent_per_night.filter(|d| *d > 0)
+    }
+
+    /// The rules that apply to this room: its own where set, the property's
+    /// otherwise.
+    pub fn rules(&self) -> HotelPolicies {
+        match (self.policy.clone(), self.hotel_policy.clone()) {
+            (Some(room), Some(hotel)) => HotelPolicies {
+                checkin_time: room.checkin_time.or(hotel.checkin_time),
+                checkout_time: room.checkout_time.or(hotel.checkout_time),
+                children_allowed: room.children_allowed.or(hotel.children_allowed),
+                children_age: room.children_age.or(hotel.children_age),
+                extrabed_available: room.extrabed_available.or(hotel.extrabed_available),
+                pet_allowed: room.pet_allowed.or(hotel.pet_allowed),
+                smoking_allowed: room.smoking_allowed.or(hotel.smoking_allowed),
+                non_smoking_property: room.non_smoking_property.or(hotel.non_smoking_property),
+                government_id_required: room
+                    .government_id_required
+                    .or(hotel.government_id_required),
+                minimum_checkin_age: room.minimum_checkin_age.or(hotel.minimum_checkin_age),
+                parties_or_event_allowed: room
+                    .parties_or_event_allowed
+                    .or(hotel.parties_or_event_allowed),
+                bank_card_allow: hotel.bank_card_allow,
+                online_transaction_allow: hotel.online_transaction_allow,
+                bank_payment_allow: hotel.bank_payment_allow,
+                public_note: room.public_note.or(hotel.public_note),
+            },
+            (Some(room), None) => room,
+            (None, Some(hotel)) => hotel,
+            (None, None) => HotelPolicies::default(),
+        }
+    }
+
+    /// Amenities grouped by their category, categories in first-seen order so
+    /// the API's own ordering carries through.
+    pub fn amenities_by_category(&self) -> Vec<(String, Vec<String>)> {
+        let mut out: Vec<(String, Vec<String>)> = Vec::new();
+        for a in &self.amenities {
+            let key = a
+                .category
+                .clone()
+                .filter(|c| !c.trim().is_empty())
+                .unwrap_or_else(|| "Amenities".into());
+            match out.iter_mut().find(|(k, _)| *k == key) {
+                Some((_, list)) => list.push(a.name.clone()),
+                None => out.push((key, vec![a.name.clone()])),
+            }
+        }
+        out
+    }
+
+    /// Upcoming stretches the room cannot be booked for.
+    pub fn blocks(&self) -> Vec<&RoomBlock> {
+        self.unavailable_ranges
+            .iter()
+            .filter(|b| b.is_active && !b.event_start_date.is_empty())
+            .collect()
+    }
+
+    /// `true` when the room is sellable right now.
+    pub fn is_bookable(&self) -> bool {
+        self.status
+            .as_deref()
+            .map(|s| s.eq_ignore_ascii_case("Available"))
+            .unwrap_or(true)
     }
 }
 
