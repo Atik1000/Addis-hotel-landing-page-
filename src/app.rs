@@ -44,6 +44,9 @@ pub fn App() -> impl IntoView {
         <Router>
             <ScrollToTopOnNavigate/>
             <div class="flex min-h-screen flex-col">
+                {// Guest session, shared by the header and the review pages.
+                 // Reads empty during SSR and fills in at hydration.
+                 crate::session::provide_guest(); view! {}}
                 <Header/>
                 <main class="flex-1">
                     <Routes fallback=|| view! { <NotFoundPage/> }>
@@ -56,6 +59,8 @@ pub fn App() -> impl IntoView {
                         <Route path=path!("/my-reservations") view=MyReservationsPage/>
                         <Route path=path!("/reservation/:booking_ref") view=ReservationDetailsPage/>
                         <Route path=path!("/retrieve-booking") view=RetrieveBookingPage/>
+                        <Route path=path!("/sign-in") view=SignInPage/>
+                        <Route path=path!("/my-reviews") view=MyReviewsPage/>
                         <Route path=path!("/how-it-works") view=HowItWorksPage/>
                         <Route path=path!("/about") view=AboutPage/>
                         <Route path=path!("/contact") view=ContactPage/>

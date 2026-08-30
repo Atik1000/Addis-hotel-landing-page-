@@ -10,6 +10,7 @@ pub mod components;
 pub mod data;
 pub mod images;
 pub mod pages;
+pub mod session;
 pub mod store;
 
 #[cfg(feature = "hydrate")]

@@ -8,6 +8,7 @@
 use crate::api::list_cities;
 use crate::components::Icon;
 use crate::images::city_image;
+use crate::session;
 use leptos::prelude::*;
 use leptos_router::components::A;
 use leptos_router::hooks::use_location;
@@ -22,6 +23,7 @@ struct NavLink {
 const DRAWER_EXTRA: &[NavLink] = &[
     NavLink { label: "My Reservation", href: "/my-reservations", icon: "calendar" },
     NavLink { label: "Retrieve Booking", href: "/retrieve-booking", icon: "search" },
+    NavLink { label: "My Reviews", href: "/my-reviews", icon: "star" },
 ];
 
 fn city_href(city: &str) -> String {
@@ -36,6 +38,7 @@ pub fn Header() -> impl IntoView {
     let lang_open = RwSignal::new(false);
     let language = RwSignal::new("EN");
     let location = use_location();
+    let guest = session::use_guest();
 
     // Shared by the desktop dropdown and the drawer's expandable section.
     let cities = Resource::new(|| (), |_| async move { list_cities(Some(12)).await });
@@ -213,6 +216,19 @@ pub fn Header() -> impl IntoView {
                         <Icon name="ticket" class="h-4 w-4" />
                         "My Reservation"
                     </A>
+
+                    // Signed in: straight to the guest's own reviews. Signed
+                    // out: nothing, since booking needs no account and an
+                    // unexplained "Sign in" invites the wrong expectation.
+                    <Show when=move || guest.get().is_some()>
+                        <A
+                            href="/my-reviews"
+                            attr:class="hidden items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700 transition-all duration-200 hover:-translate-y-0.5 hover:border-blue-300 md:flex"
+                        >
+                            <Icon name="user-check" class="h-4 w-4" />
+                            {move || guest.get().map(|g| g.short_name()).unwrap_or_default()}
+                        </A>
+                    </Show>
 
                     <A
                         href="/hotels"

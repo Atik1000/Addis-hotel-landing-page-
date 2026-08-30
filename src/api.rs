@@ -549,6 +549,81 @@ mod transport {
         serde_json::from_value::<T>(v.get("data").cloned().unwrap_or(v))
             .map_err(|e| ServerFnError::new(format!("decoding {path} failed: {e}")))
     }
+
+    /// Sends a request carrying a guest's bearer token.
+    ///
+    /// The token lives in the browser, so it arrives as an argument to the
+    /// server function rather than being read from a cookie here. An expired
+    /// one comes back as a 401 the caller surfaces as "sign in again" — there
+    /// is no silent refresh, because a guest session is short and re-requesting
+    /// a code costs one tap.
+    async fn send_auth<T: DeserializeOwned>(
+        method: reqwest::Method,
+        path: &str,
+        token: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<T, ServerFnError> {
+        if token.trim().is_empty() {
+            return Err(ServerFnError::new("Please sign in first."));
+        }
+        let mut req = client()?
+            .request(method, format!("{}{path}", api_base()))
+            .bearer_auth(token.trim());
+        if let Some(b) = body {
+            req = req.json(b);
+        }
+        let res = req
+            .send()
+            .await
+            .map_err(|e| ServerFnError::new(format!("request to {path} failed: {e}")))?;
+
+        let status = res.status();
+        let text = res
+            .text()
+            .await
+            .map_err(|e| ServerFnError::new(format!("reading {path} failed: {e}")))?;
+
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(ServerFnError::new(
+                "Your sign-in has expired. Request a new code to continue.",
+            ));
+        }
+        if !status.is_success() {
+            return Err(api_error(status, &text));
+        }
+        // A 204 and an empty body are both legitimate "it worked".
+        if text.trim().is_empty() {
+            return serde_json::from_value::<T>(serde_json::Value::Null)
+                .map_err(|_| ServerFnError::new("unexpected empty response"));
+        }
+        let v: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| ServerFnError::new(format!("decoding {path} failed: {e}")))?;
+        serde_json::from_value::<T>(v.get("data").cloned().unwrap_or(v))
+            .map_err(|e| ServerFnError::new(format!("decoding {path} failed: {e}")))
+    }
+
+    pub async fn get_auth<T: DeserializeOwned>(
+        path: &str,
+        token: &str,
+    ) -> Result<T, ServerFnError> {
+        send_auth(reqwest::Method::GET, path, token, None).await
+    }
+
+    pub async fn post_auth<T: DeserializeOwned>(
+        path: &str,
+        token: &str,
+        body: &serde_json::Value,
+    ) -> Result<T, ServerFnError> {
+        send_auth(reqwest::Method::POST, path, token, Some(body)).await
+    }
+
+    pub async fn patch_auth<T: DeserializeOwned>(
+        path: &str,
+        token: &str,
+        body: &serde_json::Value,
+    ) -> Result<T, ServerFnError> {
+        send_auth(reqwest::Method::PATCH, path, token, Some(body)).await
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1516,4 +1591,267 @@ pub async fn portal_stats() -> Result<PortalStats, ServerFnError> {
         reviews: reviews.len() as u32,
         average_rating,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Guest identity
+// ---------------------------------------------------------------------------
+
+/// A signed-in guest, as kept in the browser.
+///
+/// The portal still needs no account to *book* — this exists only for the
+/// things the API refuses to do anonymously: leaving a review, and reading back
+/// the reviews you have left.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct GuestSession {
+    pub access: String,
+    #[serde(default)]
+    pub refresh: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub email: String,
+}
+
+impl GuestSession {
+    /// First name, or the email's local part, for the header greeting.
+    pub fn short_name(&self) -> String {
+        let n = self.name.trim();
+        if !n.is_empty() {
+            return n.split_whitespace().next().unwrap_or(n).to_string();
+        }
+        self.email
+            .split('@')
+            .next()
+            .unwrap_or("Guest")
+            .to_string()
+    }
+}
+
+/// Pulls a session out of whatever shape the auth endpoint returned.
+///
+/// `login/` answers `{data:{tokens:{access,refresh},user:{…}}}`. The OTP
+/// endpoint is documented only as "logged in as guest user", so the tokens are
+/// looked for at the nested path *and* at the top level rather than assuming
+/// one of them.
+#[cfg(feature = "ssr")]
+fn session_from_value(v: &serde_json::Value) -> Option<GuestSession> {
+    let data = v.get("data").unwrap_or(v);
+    let tokens = data.get("tokens").unwrap_or(data);
+    let pick = |obj: &serde_json::Value, keys: &[&str]| -> String {
+        keys.iter()
+            .find_map(|k| obj.get(*k).and_then(|x| x.as_str()).map(str::to_owned))
+            .unwrap_or_default()
+    };
+    let access = {
+        let a = pick(tokens, &["access", "access_token"]);
+        if a.is_empty() {
+            pick(data, &["access", "access_token"])
+        } else {
+            a
+        }
+    };
+    if access.is_empty() {
+        return None;
+    }
+    let user = data.get("user").cloned().unwrap_or(serde_json::Value::Null);
+    let name = [
+        user.get("first_name").and_then(|x| x.as_str()).unwrap_or(""),
+        user.get("last_name").and_then(|x| x.as_str()).unwrap_or(""),
+    ]
+    .join(" ")
+    .trim()
+    .to_string();
+
+    Some(GuestSession {
+        access,
+        refresh: {
+            let r = pick(tokens, &["refresh", "refresh_token"]);
+            if r.is_empty() { pick(data, &["refresh", "refresh_token"]) } else { r }
+        },
+        name,
+        email: user
+            .get("email")
+            .and_then(|x| x.as_str())
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
+/// Sends a six-digit code to an email address or phone number.
+///
+/// `channel` must match the kind of `target` — the API rejects a phone number
+/// sent on the email channel rather than inferring it.
+#[server(name = RequestGuestOtp, prefix = "/api")]
+pub async fn request_guest_otp(target: String, channel: String) -> Result<(), ServerFnError> {
+    let target = target.trim();
+    if target.is_empty() {
+        return Err(ServerFnError::new("Enter your email address or phone number."));
+    }
+    let body = serde_json::json!({ "target": target, "channel": channel });
+    let _: serde_json::Value =
+        transport::post_json("/accounts/auth/otp/request/", &body).await?;
+    Ok(())
+}
+
+/// Exchanges a code for a guest session.
+#[server(name = VerifyGuestOtp, prefix = "/api")]
+pub async fn verify_guest_otp(
+    target: String,
+    otp_code: String,
+) -> Result<GuestSession, ServerFnError> {
+    let code = otp_code.trim();
+    if code.len() != 6 || !code.chars().all(|c| c.is_ascii_digit()) {
+        return Err(ServerFnError::new("Enter the six-digit code from your message."));
+    }
+    let body = serde_json::json!({ "target": target.trim(), "otp_code": code });
+    let raw: serde_json::Value =
+        transport::post_json("/accounts/auth/otp/verify/", &body).await?;
+    session_from_value(&raw)
+        .ok_or_else(|| ServerFnError::new("Signed in, but no session came back. Try again."))
+}
+
+// ---------------------------------------------------------------------------
+// Guest reviews
+// ---------------------------------------------------------------------------
+
+/// A review the signed-in guest has written.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct MyReview {
+    #[serde(default)]
+    pub id: i64,
+    #[serde(default)]
+    pub organization_id: i64,
+    #[serde(default)]
+    pub organization_name: String,
+    #[serde(default)]
+    pub rate: i32,
+    #[serde(default)]
+    pub comment: Option<String>,
+    /// The hotel's public answer, when it has replied.
+    #[serde(default)]
+    pub reply: Option<String>,
+    #[serde(default)]
+    pub replied_at: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
+impl MyReview {
+    pub fn text(&self) -> String {
+        self.comment.clone().unwrap_or_default()
+    }
+    pub fn has_reply(&self) -> bool {
+        self.reply.as_deref().is_some_and(|r| !r.trim().is_empty())
+    }
+}
+
+/// Leaves a review against a stay.
+///
+/// `booking_id` takes the human reference the guest already has — the API
+/// accepts a reservation id, a UUID or a reference like `HA-260818123` — and it
+/// is what ties the review to a verified stay.
+#[server(name = SubmitReview, prefix = "/api")]
+pub async fn submit_review(
+    token: String,
+    booking_id: String,
+    rate: i32,
+    comment: String,
+) -> Result<MyReview, ServerFnError> {
+    if !(1..=5).contains(&rate) {
+        return Err(ServerFnError::new("Choose a rating from one to five stars."));
+    }
+    let mut body = serde_json::Map::new();
+    body.insert("booking_id".into(), serde_json::json!(booking_id.trim()));
+    body.insert("rate".into(), serde_json::json!(rate));
+    if !comment.trim().is_empty() {
+        body.insert("comment".into(), serde_json::json!(comment.trim()));
+    }
+    transport::post_auth("/reviews/", &token, &serde_json::Value::Object(body)).await
+}
+
+/// Every review this guest has written.
+#[server(name = MyReviews, prefix = "/api")]
+pub async fn my_reviews(token: String) -> Result<Vec<MyReview>, ServerFnError> {
+    let v: serde_json::Value = transport::get_auth("/reviews/my-reviews/", &token).await?;
+    // The endpoint answers with a bare list; tolerate a paginated wrapper too.
+    let list = if v.is_array() {
+        v
+    } else {
+        v.get("data").cloned().unwrap_or(serde_json::Value::Array(vec![]))
+    };
+    serde_json::from_value(list)
+        .map_err(|e| ServerFnError::new(format!("decoding reviews failed: {e}")))
+}
+
+/// Edits a review the guest already left.
+#[server(name = UpdateReview, prefix = "/api")]
+pub async fn update_review(
+    token: String,
+    id: i64,
+    rate: i32,
+    comment: String,
+) -> Result<MyReview, ServerFnError> {
+    if !(1..=5).contains(&rate) {
+        return Err(ServerFnError::new("Choose a rating from one to five stars."));
+    }
+    let body = serde_json::json!({ "rate": rate, "comment": comment.trim() });
+    transport::patch_auth(&format!("/reviews/{id}/"), &token, &body).await
+}
+
+#[cfg(all(test, feature = "ssr"))]
+mod session_parsing_tests {
+    use super::*;
+
+    /// The shape `/accounts/auth/login/` actually returns, captured from the
+    /// live API. The OTP endpoint is undocumented beyond "logged in as guest
+    /// user", so the parser has to cope with the tokens sitting either nested
+    /// under `tokens` or flat on `data`.
+    #[test]
+    fn reads_the_nested_token_pair() {
+        let v = serde_json::json!({
+            "success": true,
+            "data": {
+                "tokens": { "access": "AAA", "refresh": "RRR" },
+                "user": { "first_name": "Liya", "last_name": "Girma", "email": "liya@example.com" }
+            }
+        });
+        let s = session_from_value(&v).expect("a session");
+        assert_eq!(s.access, "AAA");
+        assert_eq!(s.refresh, "RRR");
+        assert_eq!(s.name, "Liya Girma");
+        assert_eq!(s.email, "liya@example.com");
+        assert_eq!(s.short_name(), "Liya");
+    }
+
+    #[test]
+    fn reads_a_flat_token_pair() {
+        let v = serde_json::json!({
+            "data": { "access": "AAA", "refresh": "RRR" }
+        });
+        let s = session_from_value(&v).expect("a session");
+        assert_eq!(s.access, "AAA");
+        assert_eq!(s.refresh, "RRR");
+    }
+
+    #[test]
+    fn reads_access_token_aliases() {
+        let v = serde_json::json!({ "access_token": "AAA" });
+        assert_eq!(session_from_value(&v).expect("a session").access, "AAA");
+    }
+
+    #[test]
+    fn rejects_a_response_with_no_token() {
+        let v = serde_json::json!({ "data": { "user": { "email": "x@y.z" } } });
+        assert!(session_from_value(&v).is_none());
+    }
+
+    /// With no name on the user, the greeting falls back to the address.
+    #[test]
+    fn short_name_falls_back_to_the_email_local_part() {
+        let v = serde_json::json!({
+            "data": { "tokens": { "access": "AAA" }, "user": { "email": "abebe@example.com" } }
+        });
+        assert_eq!(session_from_value(&v).unwrap().short_name(), "abebe");
+    }
 }

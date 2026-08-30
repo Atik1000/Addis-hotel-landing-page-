@@ -5,7 +5,11 @@
 //! The hotel's own details are fetched live so the address and phone number are
 //! current even for a booking cached weeks ago.
 
-use crate::api::{get_hotel_detail, money_round, pretty_date, HotelDetail, Reservation};
+use crate::api::{
+    get_hotel_detail, money_round, pretty_date, submit_review, HotelDetail, Reservation,
+};
+use crate::pages::StarPicker;
+use crate::session;
 use crate::components::{pluralize, use_toast, Icon};
 use crate::store;
 use leptos::prelude::*;
@@ -206,6 +210,9 @@ fn Details(
                         })}
                     </div>
 
+                    // ---- Review the stay ------------------------------
+                    <ReviewPanel reference=reference.clone() status=status.clone() hotel=hotel_name.clone() />
+
                     // ---- Contact the hotel ----------------------------
                     <div class="mt-5 rounded-2xl border border-slate-200 bg-white p-6">
                         <h2 class="text-sm font-bold text-ink">"Need to change something?"</h2>
@@ -249,6 +256,125 @@ fn Details(
                 }.into_any()
             })}
         </Suspense>
+    }
+}
+
+/// Invites a review once the stay is over.
+///
+/// `POST /reviews/` needs a signed-in guest and the booking reference, so this
+/// pushes to the OTP sign-in when there is no session rather than failing the
+/// submit. It stays hidden while the booking is still ahead of the guest —
+/// there is nothing to review yet — and after a review has been left.
+#[component]
+fn ReviewPanel(
+    #[prop(into)] reference: String,
+    #[prop(into)] status: String,
+    #[prop(into)] hotel: String,
+) -> impl IntoView {
+    let toast = use_toast();
+    let guest = session::use_guest();
+
+    // Only a stay that actually happened can be reviewed.
+    let reviewable = matches!(status.as_str(), "Checked out" | "Completed" | "Checked in");
+    let rate = RwSignal::new(5i32);
+    let text = RwSignal::new(String::new());
+    let busy = RwSignal::new(false);
+    let done = RwSignal::new(false);
+    let booking_ref = StoredValue::new(reference);
+    // `Show` children must be `Fn`, so anything non-Copy they read has to be
+    // stored rather than captured by move.
+    let sign_in_href = StoredValue::new(format!(
+        "/sign-in?next=/reservation/{}",
+        booking_ref.get_value()
+    ));
+    let hotel_name = StoredValue::new(hotel);
+
+    let submit = move |_| {
+        if busy.get() {
+            return;
+        }
+        let Some(token) = guest.get().map(|g| g.access) else {
+            toast.info("Sign in first", "We need to confirm it is you before posting.");
+            return;
+        };
+        busy.set(true);
+        let (r, t, b) = (rate.get(), text.get(), booking_ref.get_value());
+        leptos::task::spawn_local(async move {
+            match submit_review(token, b, r, t).await {
+                Ok(_) => {
+                    busy.set(false);
+                    done.set(true);
+                    toast.success("Thank you", "Your review is now on the hotel's page.");
+                }
+                Err(e) => {
+                    busy.set(false);
+                    toast.error("Could not post the review", e.to_string());
+                }
+            }
+        });
+    };
+
+    view! {
+        <Show when=move || reviewable>
+            <div class="mt-5 rounded-2xl border border-slate-200 bg-white p-6">
+                <Show when=move || done.get()>
+                    <div class="flex items-center gap-3">
+                        <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
+                            <Icon name="check-circle" class="h-5 w-5" />
+                        </span>
+                        <div>
+                            <h2 class="text-sm font-bold text-ink">"Review posted"</h2>
+                            <p class="text-sm text-slate-500">
+                                "You can edit it any time from "
+                                <A href="/my-reviews" attr:class="font-semibold text-blue-700 hover:underline">
+                                    "My reviews"
+                                </A>
+                                "."
+                            </p>
+                        </div>
+                    </div>
+                </Show>
+
+                <Show when=move || !done.get()>
+                    <h2 class="text-sm font-bold text-ink">
+                        {move || format!("How was {}?", hotel_name.get_value())}
+                    </h2>
+                    <p class="mt-1 text-sm text-slate-500">
+                        "Your review appears on the hotel's page and helps the next traveller."
+                    </p>
+
+                    <Show when=move || guest.get().is_none()>
+                        <A
+                            href=move || sign_in_href.get_value()
+                            attr:class="mt-4 inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-blue-800"
+                        >
+                            <Icon name="key" class="h-4 w-4" />
+                            "Sign in to leave a review"
+                        </A>
+                    </Show>
+
+                    <Show when=move || guest.get().is_some()>
+                        <div class="mt-4 flex flex-col gap-3">
+                            <StarPicker value=rate />
+                            <textarea
+                                rows="4"
+                                class="w-full rounded-xl border border-slate-300 px-3.5 py-2.5 text-sm text-slate-800 transition-all duration-200 focus:border-blue-500 focus:outline-none focus:ring-4 focus:ring-blue-100"
+                                placeholder="What stood out — the room, the staff, the location?"
+                                prop:value=move || text.get()
+                                on:input=move |e| text.set(event_target_value(&e))
+                            ></textarea>
+                            <button
+                                on:click=submit
+                                disabled=move || busy.get()
+                                class="sheen self-start rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white shadow-md transition-colors hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                {move || if busy.get() { "Posting…" } else { "Post review" }}
+                            </button>
+                        </div>
+                    </Show>
+                </Show>
+            </div>
+        </Show>
     }
 }
 
