@@ -90,7 +90,8 @@ fn RoomBody(room: RoomSummary, hotel_id: String, dates: String) -> impl IntoView
             .collect()
     };
     let photos: Vec<String> = if own.is_empty() {
-        (0..4)
+        // Five, so the mosaic's hero-plus-four grid fills completely.
+        (0..5)
             .map(|i| {
                 room_image(
                     room.id + i * 7,

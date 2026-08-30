@@ -20,25 +20,37 @@ pub fn Gallery(photos: Vec<String>, #[prop(into)] alt: String) -> impl IntoView 
     let next = move |_| index.update(|i| *i = (*i + 1) % count);
     let prev = move |_| index.update(|i| *i = (*i + count - 1) % count);
 
-    // The mosaic shows a hero plus up to four thumbnails; the last thumbnail
-    // carries the "+N photos" overlay when there are more than five.
+    // The mosaic is two rows tall with the hero filling a 2x2 block, so the
+    // thumbnails have to come in pairs or the grid ends on a hole. Take an even
+    // number of them and widen the grid to fit exactly that many — anything
+    // left over is still reachable through the lightbox.
+    let mut take = count.saturating_sub(1).min(4);
+    take -= take % 2;
+    let cols = match take {
+        4 => "grid-cols-4",
+        2 => "grid-cols-3",
+        _ => "grid-cols-2",
+    };
     let thumbs: Vec<(usize, String)> = photos
         .iter()
         .skip(1)
-        .take(4)
+        .take(take)
         .cloned()
         .enumerate()
         .map(|(i, p)| (i + 1, p))
         .collect();
-    let hidden = count.saturating_sub(5);
+    let hidden = count.saturating_sub(1 + take);
     let last_thumb = thumbs.len().saturating_sub(1);
 
     view! {
         <div class="relative">
-            <div class="grid h-[22rem] grid-cols-4 grid-rows-2 gap-2 overflow-hidden rounded-2xl sm:h-[26rem]">
+            <div class=format!("grid h-[22rem] {cols} grid-rows-2 gap-2 overflow-hidden rounded-2xl sm:h-[26rem]")>
                 <button
                     on:click=move |_| show(0)
-                    class="group relative col-span-4 row-span-2 overflow-hidden sm:col-span-2"
+                    class=format!(
+                        "group relative row-span-2 overflow-hidden sm:col-span-2 {}",
+                        match take { 4 => "col-span-4", 2 => "col-span-3", _ => "col-span-2" }
+                    )
                 >
                     <img
                         src=hero
