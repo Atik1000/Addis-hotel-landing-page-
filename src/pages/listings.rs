@@ -235,7 +235,15 @@ pub fn ListingsPage() -> impl IntoView {
     view! {
         <Title text="Browse Hotels — Horn of Africa Hotel Portal" />
 
-        <div class="border-b border-slate-200 bg-white">
+        // `relative z-30` is load-bearing. The filter rail below is
+        // `lg:sticky`, which makes it a positioned element, while the search
+        // widget sits inside `animate-fade-up` whose transform creates a
+        // stacking context with `z-index: auto`. A positioned element paints
+        // above such a context, so the rail's first card punched through the
+        // open destination dropdown and hid the suggestions. Positioning this
+        // block lifts the widget and its panels above the rail. It stays below
+        // the site header's z-40 so that still wins while scrolling.
+        <div class="relative z-30 border-b border-slate-200 bg-white">
             <div class="mx-auto max-w-6xl px-4 py-5">
                 <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
                     <div class="animate-fade-up">
