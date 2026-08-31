@@ -37,6 +37,9 @@ pub fn SearchWidget(
     let rooms = RwSignal::new(1u32);
     let suggestions_open = RwSignal::new(false);
     let guests_open = RwSignal::new(false);
+    // Set when the destination came from the typeahead rather than free typing,
+    // so a deliberate city choice still filters by city exactly.
+    let picked_city = RwSignal::new(false);
 
     let cities = Resource::new(|| (), |_| async move { list_cities(Some(100)).await });
     let matches = move || {
@@ -59,8 +62,13 @@ pub fn SearchWidget(
     let submit = {
         let navigate = navigate.clone();
         move |_| {
+            // The field accepts a city, a hotel name or an area, so it goes to
+            // `search` — which the API matches across name, description, city
+            // and country. Sending it as `city` meant typing a hotel name
+            // filtered by a city of that name and returned nothing.
             let query = format!(
-                "/hotels?city={}&check_in={}&check_out={}&guests={}&rooms={}",
+                "/hotels?{}={}&check_in={}&check_out={}&guests={}&rooms={}",
+                if picked_city.get() { "city" } else { "search" },
                 encode(&destination.get()),
                 encode(&check_in.get()),
                 encode(&check_out.get()),
@@ -108,6 +116,7 @@ pub fn SearchWidget(
                             on:focus=move |_| suggestions_open.set(true)
                             on:input:target=move |ev| {
                                 destination.set(ev.target().value());
+                                picked_city.set(false);
                                 suggestions_open.set(true);
                             }
                         />
@@ -123,7 +132,15 @@ pub fn SearchWidget(
                     </div>
 
                     <Show when=move || suggestions_open.get() && !matches().is_empty()>
-                        <div class="absolute left-0 right-0 top-full z-30 mt-1.5 max-h-72 animate-fade-down overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-2xl shadow-slate-900/15">
+                        // Stacked (mobile, and the vertical hero widget) the panel
+                        // sits in the flow and pushes the rest of the form down;
+                        // as an overlay it hid check-in, check-out and guests
+                        // entirely. It only floats once the row is side by side.
+                        <div class=if horizontal {
+                            "relative mt-1.5 max-h-72 animate-fade-down overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg lg:absolute lg:left-0 lg:right-0 lg:top-full lg:z-30 lg:shadow-2xl lg:shadow-slate-900/15"
+                        } else {
+                            "relative mt-1.5 max-h-72 animate-fade-down overflow-y-auto rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg"
+                        }>
                             <p class="px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-400">"Popular destinations"</p>
                             {move || matches().into_iter().map(|c| {
                                 let name = c.city.clone();
@@ -133,6 +150,7 @@ pub fn SearchWidget(
                                         class="flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors hover:bg-blue-50"
                                         on:click=move |_| {
                                             destination.set(name.clone());
+                                            picked_city.set(true);
                                             suggestions_open.set(false);
                                         }
                                     >
@@ -222,7 +240,11 @@ pub fn SearchWidget(
                     </button>
 
                     <Show when=move || guests_open.get()>
-                        <div class="absolute left-0 right-0 top-full z-30 mt-1.5 animate-fade-down rounded-xl border border-slate-200 bg-white p-3 shadow-2xl shadow-slate-900/15">
+                        <div class=if horizontal {
+                            "relative mt-1.5 animate-fade-down rounded-xl border border-slate-200 bg-white p-3 shadow-lg lg:absolute lg:left-0 lg:right-0 lg:top-full lg:z-30 lg:shadow-2xl lg:shadow-slate-900/15"
+                        } else {
+                            "relative mt-1.5 animate-fade-down rounded-xl border border-slate-200 bg-white p-3 shadow-lg"
+                        }>
                             <Stepper label="Guests" hint="Ages 13 or above" value=guests min=1 max=16 />
                             <div class="my-2 h-px bg-slate-100"></div>
                             <Stepper label="Rooms" hint="Separate rooms" value=rooms min=1 max=8 />

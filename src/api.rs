@@ -699,13 +699,41 @@ pub async fn list_rooms(query: RoomQuery) -> Result<Page<RoomSummary>, ServerFnE
     transport::get_page("/rooms/public/", &p).await
 }
 
-/// The amenity catalogue, used to turn the filter rail's checkboxes into the
-/// comma-separated ids `/organizations/public/` expects.
+/// The amenities a guest can actually filter on, for the listings rail.
+///
+/// `GET /amenities/` is the obvious source and is the platform-wide catalogue —
+/// but it comes back empty, because every amenity in this deployment is a
+/// custom one owned by a hotel rather than a catalogue entry. Filtering by id
+/// *does* work on `/organizations/public/?amenities=`, so the list is assembled
+/// from the amenities the public room feed actually exposes. Falls back to the
+/// catalogue if it ever starts returning rows.
 #[server(name = ListAmenities, prefix = "/api")]
 pub async fn list_amenities() -> Result<Vec<Amenity>, ServerFnError> {
-    Ok(transport::get_page::<Amenity>("/amenities/", &Vec::new())
-        .await?
-        .items)
+    let catalogue = transport::get_page::<Amenity>("/amenities/", &Vec::new())
+        .await
+        .map(|p| p.items)
+        .unwrap_or_default();
+    if !catalogue.is_empty() {
+        return Ok(catalogue);
+    }
+
+    let rooms = transport::get_page::<RoomSummary>(
+        "/rooms/public/",
+        &vec![("page_size", "100".to_string())],
+    )
+    .await?
+    .items;
+
+    let mut seen: Vec<Amenity> = Vec::new();
+    for room in rooms {
+        for a in room.amenities {
+            if a.id != 0 && !a.name.trim().is_empty() && !seen.iter().any(|x| x.id == a.id) {
+                seen.push(a);
+            }
+        }
+    }
+    seen.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    Ok(seen)
 }
 
 /// One room, for the reservation flow.

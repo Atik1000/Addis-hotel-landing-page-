@@ -93,6 +93,15 @@ pub fn ListingsPage() -> impl IntoView {
                 city.set(c);
             }
         }
+        // Free text from the search box arrives as `search=`; a city chosen from
+        // the typeahead or a destination tile arrives as `city=`. Both have to be
+        // honoured, or a search for a hotel by name lands on an unfiltered page.
+        if let Some(t) = q.get("search") {
+            let t = t.replace('+', " ");
+            if !t.is_empty() {
+                text.set(t);
+            }
+        }
         check_in.set(q.get("check_in").unwrap_or_default());
         check_out.set(q.get("check_out").unwrap_or_default());
     });
@@ -123,10 +132,14 @@ pub fn ListingsPage() -> impl IntoView {
                 search: Some(search),
                 city: Some(city),
                 // The endpoint takes a numeric range, so a discrete set of star
-                // classes collapses to its bounds. Picking 3 and 5 therefore
-                // also returns 4s — the API has no "one of" form for this.
+                // classes collapses to its bounds; the exact set is applied
+                // again on the rows that come back.
+                //
+                // The upper bound is `+0.9`, not `+0.99`: the API rounds
+                // max_rating to one decimal, so 4.99 became 5.0 and the 4-star
+                // chip returned 5-star hotels.
                 min_rating: stars.iter().min().map(|s| *s as f32),
-                max_rating: stars.iter().max().map(|s| *s as f32 + 0.99),
+                max_rating: stars.iter().max().map(|s| *s as f32 + 0.9),
                 amenities: (!amenities.is_empty()).then(|| {
                     amenities
                         .iter()
@@ -191,11 +204,14 @@ pub fn ListingsPage() -> impl IntoView {
 
     let heading = move || {
         let c = city.get();
-        if c.is_empty() {
-            "Hotels across the Horn of Africa".to_string()
-        } else {
-            format!("Hotels in {c}")
+        if !c.is_empty() {
+            return format!("Hotels in {c}");
         }
+        let t = text.get();
+        if !t.is_empty() {
+            return format!("Hotels matching \u{201c}{t}\u{201d}");
+        }
+        "Hotels across the Horn of Africa".to_string()
     };
 
     // Mirror the amenity catalogue into a plain signal. Chip labels are read
@@ -506,7 +522,19 @@ pub fn ListingsPage() -> impl IntoView {
                         // Awaited, not read: a plain `.get()` here resolves to
                         // `None` on the first paint and the cards lose their price.
                         let from_prices = prices.await.unwrap_or_default();
-                        match hotels.await {
+                        // The API's rating filter is a range, so a non-contiguous
+                        // selection (5 and 3) still brings back the classes in
+                        // between. Narrow to the exact chips, matching on the same
+                        // rounded value the cards display.
+                        let picked = star_classes.get();
+                        let keep = move |h: &crate::api::HotelSummary| {
+                            picked.is_empty() || picked.contains(&(h.stars().round() as u32))
+                        };
+                        let hotels_result = hotels.await.map(|mut p| {
+                            p.items.retain(&keep);
+                            p
+                        });
+                        match hotels_result {
                             Err(e) => view! {
                                 <EmptyState
                                     icon="alert"
