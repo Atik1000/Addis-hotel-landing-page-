@@ -61,6 +61,19 @@ fn HotelBody(
     let show_all_amenities = RwSignal::new(false);
     let reviews_shown = RwSignal::new(3usize);
 
+    // The searched range, carried on to the room and booking pages so the guest
+    // never has to pick their dates twice.
+    let q = use_query_map();
+    let dates = StoredValue::new({
+        let q = q.get_untracked();
+        match (q.get("check_in"), q.get("check_out")) {
+            (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() => {
+                format!("?check_in={a}&check_out={b}")
+            }
+            _ => String::new(),
+        }
+    });
+
     let h = hotel.clone();
     let currency = h.currency_code().to_string();
     let stars = h.stars();
@@ -273,7 +286,7 @@ fn HotelBody(
                                 view! {
                                     <div class="mt-4 flex flex-col gap-4">
                                         {list.into_iter().enumerate().map(|(i, r)| {
-                                            view! { <RoomRow room=r hotel_id=hotel_id currency=cur.clone() index=i /> }
+                                            view! { <RoomRow room=r hotel_id=hotel_id currency=cur.clone() index=i dates=dates.get_value() /> }
                                         }).collect_view()}
                                     </div>
                                 }.into_any()
@@ -550,7 +563,16 @@ fn HotelBody(
 
 /// One bookable room.
 #[component]
-fn RoomRow(room: RoomSummary, hotel_id: i64, currency: String, index: usize) -> impl IntoView {
+fn RoomRow(
+    room: RoomSummary,
+    hotel_id: i64,
+    currency: String,
+    index: usize,
+    /// The searched dates, so booking opens on the range the guest picked
+    /// instead of resetting to a default.
+    #[prop(into, default = String::new())]
+    dates: String,
+) -> impl IntoView {
     let delay = format!("animation-delay: {}ms", index * 70);
     let image = room_image(
         room.id,
@@ -562,8 +584,8 @@ fn RoomRow(room: RoomSummary, hotel_id: i64, currency: String, index: usize) -> 
     let price = room.price();
     let beds = room.bed_summary();
     let amenities: Vec<String> = room.amenities.iter().take(4).map(|a| a.name.clone()).collect();
-    let href = format!("/hotels/{hotel_id}/reserve/{}", room.id);
-    let detail_href = format!("/hotels/{hotel_id}/rooms/{}", room.id);
+    let href = format!("/hotels/{hotel_id}/reserve/{}{dates}", room.id);
+    let detail_href = format!("/hotels/{hotel_id}/rooms/{}{dates}", room.id);
     let discount = room.discount_percent_per_night.unwrap_or(0);
 
     view! {

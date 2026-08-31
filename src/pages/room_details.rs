@@ -6,7 +6,7 @@
 //! ride through the query string so the "Reserve" button lands on the booking
 //! form already filled in.
 
-use crate::api::{get_room, money_round, HotelPolicies, RoomBlock, RoomSummary};
+use crate::api::{get_room, money_round, pretty_date, HotelPolicies, RoomBlock, RoomSummary};
 use crate::components::{pluralize, Breadcrumbs, Gallery, Icon};
 use crate::images::room_image;
 use leptos::prelude::*;
@@ -31,6 +31,14 @@ pub fn RoomDetailsPage() -> impl IntoView {
         }
     };
 
+    let stay = move || {
+        let q = query.get();
+        match (q.get("check_in"), q.get("check_out")) {
+            (Some(a), Some(b)) if !a.is_empty() && !b.is_empty() => Some((a, b)),
+            _ => None,
+        }
+    };
+
     let room = Resource::new(room_id, |id| async move { get_room(id).await });
 
     view! {
@@ -38,9 +46,10 @@ pub fn RoomDetailsPage() -> impl IntoView {
             {move || Suspend::new(async move {
                 let hid = hotel_id();
                 let d = dates();
+                let s = stay();
                 match room.await {
                     Err(e) => view! { <RoomNotFound message=e.to_string() /> }.into_any(),
-                    Ok(r) => view! { <RoomBody room=r hotel_id=hid dates=d /> }.into_any(),
+                    Ok(r) => view! { <RoomBody room=r hotel_id=hid dates=d stay=s /> }.into_any(),
                 }
             })}
         </Suspense>
@@ -48,7 +57,14 @@ pub fn RoomDetailsPage() -> impl IntoView {
 }
 
 #[component]
-fn RoomBody(room: RoomSummary, hotel_id: String, dates: String) -> impl IntoView {
+fn RoomBody(
+    room: RoomSummary,
+    hotel_id: String,
+    dates: String,
+    /// The searched check-in/check-out, when the guest arrived here from a
+    /// dated search.
+    stay: Option<(String, String)>,
+) -> impl IntoView {
     let hotel = room.hotel.clone();
     let hotel_name = hotel
         .as_ref()
@@ -317,6 +333,22 @@ fn RoomBody(room: RoomSummary, hotel_id: String, dates: String) -> impl IntoView
                             <p class="mt-1 text-xs text-slate-400">
                                 {format!("Sleeps up to {}", pluralize(capacity, "guest"))}
                             </p>
+
+                            // The dates carried in from the search, so it is
+                            // obvious what "Reserve" is about to book.
+                            {stay.clone().map(|(ci, co)| view! {
+                                <div class="mt-3 rounded-xl bg-slate-50 px-3 py-2.5">
+                                    <p class="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                                        "Your dates"
+                                    </p>
+                                    <p class="mt-1 flex items-center gap-2 text-xs">
+                                        <Icon name="calendar" class="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                        <span class="font-semibold text-ink">{pretty_date(Some(&ci))}</span>
+                                        <Icon name="arrow-right" class="h-3 w-3 shrink-0 text-slate-300" />
+                                        <span class="font-semibold text-ink">{pretty_date(Some(&co))}</span>
+                                    </p>
+                                </div>
+                            })}
                         </div>
 
                         <div class="flex flex-col gap-2.5 p-5">
@@ -326,7 +358,7 @@ fn RoomBody(room: RoomSummary, hotel_id: String, dates: String) -> impl IntoView
                                         href=reserve_href.clone()
                                         attr:class="sheen flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 py-3.5 text-sm font-bold text-white shadow-md shadow-blue-700/25 transition-all duration-200 hover:-translate-y-0.5 hover:bg-blue-800 hover:shadow-lg active:scale-[0.98]"
                                     >
-                                        "Reserve this room"
+                                        {if stay.is_some() { "Reserve these dates" } else { "Reserve this room" }}
                                         <Icon name="arrow-right" class="h-4 w-4" />
                                     </A>
                                 }.into_any()

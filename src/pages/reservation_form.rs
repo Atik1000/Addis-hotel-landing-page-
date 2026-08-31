@@ -10,6 +10,10 @@
 //! * `POST /reservations/public/book/` creates the reservation. No account is
 //!   needed; the email or phone entered here is what retrieves it later.
 //!
+//! The dates picked in the search widget ride through the query string, so the
+//! wizard opens on the range the guest actually chose rather than resetting to
+//! a default they then have to re-enter.
+//!
 //! Nothing is charged — the guest pays the hotel on arrival.
 
 use crate::api::{
@@ -20,7 +24,7 @@ use crate::components::{pluralize, Icon};
 use leptos::prelude::*;
 use leptos_meta::Title;
 use leptos_router::components::A;
-use leptos_router::hooks::{use_navigate, use_params_map};
+use leptos_router::hooks::{use_navigate, use_params_map, use_query_map};
 
 /// Days since 1970-01-01 (Howard Hinnant's `days_from_civil`).
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
@@ -148,6 +152,7 @@ pub fn ReservationFormPage() -> impl IntoView {
 #[component]
 fn ReservationWizard(hotel: HotelDetail, room: RoomSummary) -> impl IntoView {
     let navigate = use_navigate();
+    let query = use_query_map();
     let nav = StoredValue::new(navigate);
 
     let hotel_id = hotel.id;
@@ -174,10 +179,31 @@ fn ReservationWizard(hotel: HotelDetail, room: RoomSummary) -> impl IntoView {
     let extra_beds_allowed = policies.extrabed_available.unwrap_or(false);
     let pets_allowed = policies.pet_allowed.unwrap_or(false);
 
-    // Seeded from tomorrow so the API's "check-in not in the past" rule passes.
+    // Seeded from tomorrow so the API's "check-in not in the past" rule passes,
+    // then overridden by whatever the guest searched for. A range that has since
+    // gone stale — a check-in now in the past, or an end that is not after the
+    // start — falls back rather than opening the form on dates the API will
+    // reject.
     let start = today_iso();
-    let default_in = plus_days(&start, 1);
-    let default_out = plus_days(&start, 3);
+    let fallback_in = plus_days(&start, 1);
+    let fallback_out = plus_days(&start, 3);
+
+    let wanted = query.get_untracked();
+    let usable = |raw: Option<String>| -> Option<String> {
+        let v = raw?;
+        parse_iso(&v).is_some().then_some(v)
+    };
+    let (default_in, default_out) = match (
+        usable(wanted.get("check_in")),
+        usable(wanted.get("check_out")),
+    ) {
+        (Some(ci), Some(co))
+            if nights_between(&ci, &co).is_some_and(|n| n > 0) && ci >= start =>
+        {
+            (ci, co)
+        }
+        _ => (fallback_in, fallback_out),
+    };
 
     let step = RwSignal::new(0usize);
     let first_name = RwSignal::new(String::new());
@@ -623,6 +649,37 @@ fn ReservationWizard(hotel: HotelDetail, room: RoomSummary) -> impl IntoView {
                                     "Breakfast included"
                                 </p>
                             </Show>
+
+                            // ---- The stay ---------------------------------
+                            // Mirrors the date fields so the chosen range is
+                            // visible from every step, not just the one that
+                            // sets it.
+                            <div class="mt-3 rounded-xl bg-slate-50 px-3 py-2.5">
+                                <div class="flex items-center justify-between gap-2">
+                                    <span class="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                                        "Your stay"
+                                    </span>
+                                    <span class="text-[11px] font-semibold text-slate-500">
+                                        {move || {
+                                            let n = nights.get();
+                                            if n == 0 { "—".to_string() } else { pluralize(n, "night") }
+                                        }}
+                                    </span>
+                                </div>
+                                <div class="mt-1.5 flex items-center gap-2 text-xs text-slate-600">
+                                    <Icon name="calendar" class="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                    <span class="font-semibold text-ink">
+                                        {move || pretty_date(Some(&check_in.get()))}
+                                    </span>
+                                    <Icon name="arrow-right" class="h-3 w-3 shrink-0 text-slate-300" />
+                                    <span class="font-semibold text-ink">
+                                        {move || pretty_date(Some(&check_out.get()))}
+                                    </span>
+                                </div>
+                                <p class="mt-1 text-[11px] text-slate-400">
+                                    {move || pluralize(guests.get(), "guest")}
+                                </p>
+                            </div>
 
                             // ---- Live price breakdown ---------------------
                             <div class="mt-4 border-t border-slate-100 pt-4">
