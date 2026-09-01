@@ -20,6 +20,9 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
                 <meta property="og:title" content="Horn of Africa Hotel Portal"/>
                 <meta property="og:description" content="Reserve hotels across the Horn of Africa in seconds. Pay at the hotel, no booking fees."/>
                 <meta property="og:type" content="website"/>
+                <link rel="icon" href="/favicon.ico" sizes="any"/>
+                <link rel="icon" type="image/png" href="/favicon.png"/>
+                <link rel="apple-touch-icon" href="/apple-touch-icon.png"/>
                 <link rel="preconnect" href="https://images.unsplash.com"/>
                 <AutoReload options=options.clone() />
                 <HashedStylesheet options=options.clone() id="leptos"/>

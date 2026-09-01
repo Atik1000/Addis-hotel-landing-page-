@@ -392,6 +392,15 @@ fn ReservationWizard(hotel: HotelDetail, room: RoomSummary) -> impl IntoView {
                 "Back to " {back_label}
             </A>
 
+            // The page had no top-level heading at all, so assistive tech and
+            // search engines saw an untitled document.
+            <h1 class="mb-1 text-xl font-bold tracking-tight text-ink sm:text-2xl">
+                "Complete your reservation"
+            </h1>
+            <p class="mb-6 text-sm text-slate-500">
+                {format!("{} · {}", hotel_name.clone(), room_name.clone())}
+            </p>
+
             // ---- Step indicator ------------------------------------------
             <div class="mb-6 grid grid-cols-3 gap-2">
                 {["Your details", "Your stay", "Review"].into_iter().enumerate().map(|(i, label)| view! {
