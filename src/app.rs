@@ -5,7 +5,7 @@ use leptos_meta::{provide_meta_context, HashedStylesheet, MetaTags, Title};
 use leptos_router::{
     components::{Route, Router, Routes},
     hooks::use_location,
-    path,
+    path, SsrMode,
 };
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
@@ -55,8 +55,21 @@ pub fn App() -> impl IntoView {
                     <Routes fallback=|| view! { <NotFoundPage/> }>
                         <Route path=path!("/") view=HomePage/>
                         <Route path=path!("/hotels") view=ListingsPage/>
-                        <Route path=path!("/hotels/:id") view=HotelDetailsPage/>
-                        <Route path=path!("/hotels/:id/rooms/:room_id") view=RoomDetailsPage/>
+                        // These two take their <title> from awaited data. Under
+                        // the default out-of-order streaming the <head> is
+                        // flushed before the Suspense body resolves, so the
+                        // served HTML carried the generic site title and only
+                        // JavaScript corrected it — link previews and crawlers
+                        // saw the wrong name. Async rendering resolves the
+                        // resources before rendering the head. It costs time to
+                        // first byte, which is the right trade on the two pages
+                        // people actually share.
+                        <Route path=path!("/hotels/:id") view=HotelDetailsPage ssr=SsrMode::Async/>
+                        <Route
+                            path=path!("/hotels/:id/rooms/:room_id")
+                            view=RoomDetailsPage
+                            ssr=SsrMode::Async
+                        />
                         <Route path=path!("/hotels/:id/reserve/:room_id") view=ReservationFormPage/>
                         <Route path=path!("/confirmation/:booking_ref") view=ConfirmationPage/>
                         <Route path=path!("/my-reservations") view=MyReservationsPage/>
