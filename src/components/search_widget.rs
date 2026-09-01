@@ -41,6 +41,52 @@ pub fn SearchWidget(
     // so a deliberate city choice still filters by city exactly.
     let picked_city = RwSignal::new(false);
 
+    // Both panels open on focus but had nothing to close them except choosing
+    // an option, so they stayed up while the guest clicked elsewhere on the
+    // page. These refs let a document-level listener tell "inside" from "outside".
+    let dest_ref = NodeRef::<leptos::html::Div>::new();
+    let guests_ref = NodeRef::<leptos::html::Div>::new();
+
+    // Client-only: there is no document to listen to while rendering on the
+    // server, and effects never run there anyway.
+    #[cfg(feature = "hydrate")]
+    {
+        use wasm_bindgen::JsCast;
+
+        // `click`, not `mousedown` — closing on mousedown would unmount a
+        // suggestion before its own click landed, so picking a city would
+        // silently do nothing.
+        let handle = window_event_listener(leptos::ev::click, move |ev| {
+            let Some(node) = ev
+                .target()
+                .and_then(|t| t.dyn_into::<web_sys::Node>().ok())
+            else {
+                return;
+            };
+            let inside = |r: NodeRef<leptos::html::Div>| {
+                r.get_untracked()
+                    .map(|el| el.contains(Some(&node)))
+                    .unwrap_or(false)
+            };
+            if suggestions_open.get_untracked() && !inside(dest_ref) {
+                suggestions_open.set(false);
+            }
+            if guests_open.get_untracked() && !inside(guests_ref) {
+                guests_open.set(false);
+            }
+        });
+        on_cleanup(move || handle.remove());
+
+        // Escape closes whatever is open, which is what a keyboard user expects.
+        let keys = window_event_listener(leptos::ev::keydown, move |ev| {
+            if ev.key() == "Escape" {
+                suggestions_open.set(false);
+                guests_open.set(false);
+            }
+        });
+        on_cleanup(move || keys.remove());
+    }
+
     let cities = Resource::new(|| (), |_| async move { list_cities(Some(100)).await });
     let matches = move || {
         let q = destination.get().to_lowercase();
@@ -102,7 +148,7 @@ pub fn SearchWidget(
                 "grid gap-3"
             }>
                 // ---- Destination with typeahead ----------------------------
-                <div class="relative">
+                <div class="relative" node_ref=dest_ref>
                     <Show when=move || !horizontal>
                         <label class="mb-1 block text-xs font-semibold text-slate-500">"Destination"</label>
                     </Show>
@@ -218,7 +264,7 @@ pub fn SearchWidget(
                 </Show>
 
                 // ---- Guests & rooms stepper --------------------------------
-                <div class="relative">
+                <div class="relative" node_ref=guests_ref>
                     <Show when=move || !horizontal>
                         <label class="mb-1 block text-xs font-semibold text-slate-500">"Guests & Rooms"</label>
                     </Show>

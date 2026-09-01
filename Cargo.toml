@@ -27,6 +27,7 @@ wasm-bindgen = { version = "0.2.106", optional = true }
 web-sys = { version = "0.3", features = [
     "ScrollBehavior", "ScrollIntoViewOptions", "ScrollLogicalPosition", "ScrollToOptions",
     "Window", "Storage", "Navigator", "Clipboard",
+    "Node", "Element", "EventTarget",
 ] }
 
 [features]
