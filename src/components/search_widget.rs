@@ -3,7 +3,7 @@
 //! Submitting navigates to `/hotels` with the criteria as query parameters so
 //! the listings page can pick them up (and so a search is linkable).
 
-use crate::components::Icon;
+use crate::components::{pluralize, Icon};
 use crate::api::list_cities;
 use leptos::prelude::*;
 use leptos_router::hooks::use_navigate;
@@ -217,7 +217,7 @@ pub fn SearchWidget(
                                             </span>
                                         </span>
                                         <span class="shrink-0 text-xs font-medium text-slate-400">
-                                            {format!("{} hotels", c.hotel_count)}
+                                            {pluralize(c.hotel_count, "hotel")}
                                         </span>
                                     </button>
                                 }

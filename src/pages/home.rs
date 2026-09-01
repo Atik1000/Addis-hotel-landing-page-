@@ -1,5 +1,5 @@
 use crate::components::{
-    AccordionItem, Icon, SearchWidget, SectionHeading, Stars, TrustBar,
+    pluralize, AccordionItem, Icon, SearchWidget, SectionHeading, Stars, TrustBar,
 };
 use crate::api::{
     hotel_from_prices, list_cities, list_hotels, money_round, portal_stats, HotelQuery,
@@ -196,7 +196,7 @@ pub fn HomePage() -> impl IntoView {
                                             <span class="mt-1.5 inline-flex items-center gap-1 rounded-full bg-white/15 px-2 py-0.5 text-[10px] font-semibold backdrop-blur">
                                                 {match from {
                                                     Some(p) => format!("from ETB {}", money_round(p)),
-                                                    None => format!("{} hotels", c.hotel_count),
+                                                    None => pluralize(c.hotel_count, "hotel"),
                                                 }}
                                             </span>
                                         </span>

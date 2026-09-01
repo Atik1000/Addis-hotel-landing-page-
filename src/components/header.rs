@@ -6,7 +6,7 @@
 //! that actually have hotels rather than a hardcoded set.
 
 use crate::api::list_cities;
-use crate::components::Icon;
+use crate::components::{pluralize, Icon};
 use crate::images::city_image;
 use crate::session;
 use leptos::prelude::*;
@@ -147,10 +147,7 @@ pub fn Header() -> impl IntoView {
                                                                         {c.city.clone()}
                                                                     </span>
                                                                     <span class="block truncate text-[11px] text-slate-500">
-                                                                        {match count {
-                                                                            1 => "1 hotel".to_string(),
-                                                                            n => format!("{n} hotels"),
-                                                                        }}
+                                                                        {pluralize(count, "hotel")}
                                                                         {c.country.clone().map(|co| format!(" · {co}")).unwrap_or_default()}
                                                                     </span>
                                                                 </span>
